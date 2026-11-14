@@ -21,8 +21,8 @@ MODE ?= smoke
 SCENARIO ?= mixed
 VUS_MAX ?= 600
 VIRAL_SCENARIOS := baseline fanout graph_read mixed
-# Degraus: moderado (150, assumed: confirmar por rampa exploratória) e estresse viral (600).
-VIRAL_LEVELS ?= 150 600
+# Degraus: moderado (20, rampa exploratória em code/docs/viralizacao.md) e estresse viral (600).
+VIRAL_LEVELS ?= 20 600
 # Limite da espera de drenagem pós-carga (filas/outbox vazias), em segundos.
 DRAIN_TIMEOUT_S ?= 900
 export DRAIN_TIMEOUT_S

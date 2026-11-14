@@ -57,7 +57,7 @@ scripts/viral.sh obs up                       # Prometheus :9090, Grafana :3000,
 MODE=smoke scripts/viral.sh load sync         # 30 s, 50 VUs (SCENARIO padrão: mixed)
 make viral-tcc VIRAL_ARCH=async SCENARIO=fanout   # restore do snapshot + warmup + MODE=tcc (3 min)
 make viral-tcc-all VIRAL_ARCH=sync                # os 4 cenários, restore limpo antes de cada um
-make viral-tcc-levels VIRAL_ARCH=sync             # um cenário em cada degrau (VIRAL_LEVELS=150 600)
+make viral-tcc-levels VIRAL_ARCH=sync             # um cenário em cada degrau (VIRAL_LEVELS=20 600)
 scripts/viral.sh counts async                     # contagens direto no banco, a qualquer momento
 ```
 
@@ -80,10 +80,33 @@ Os resultados são separados em dois degraus, cada um sobre snapshot restaurado:
 
 | Degrau | `VUS_MAX` | Finalidade |
 | --- | --- | --- |
-| Moderado | 150 ⚠️ (assumed) | Carga em que a composição síncrona ainda responde dentro do timeout do k6, permitindo comparar a latência efetiva das duas composições. |
+| Moderado | 20 | Carga em que a composição síncrona ainda responde às rotas de usuários comuns dentro do timeout do k6, permitindo comparar a latência efetiva das duas composições. |
 | Estresse viral | 600 | Saturação: mostra como cada composição degrada (timeouts no síncrono, acúmulo de filas no assíncrono). |
 
-⚠️ Assumed: o valor de 150 VUs não foi medido. Antes da coleta final, escolher por rampa exploratória o maior degrau em que o síncrono fica abaixo de ~1% de `http_timeouts`, e registrar esse valor aqui. `VIRAL_LEVELS` altera a lista usada por `make viral-tcc-levels`.
+`VIRAL_LEVELS` altera a lista usada por `make viral-tcc-levels`.
+
+#### Escolha do degrau moderado (rampa exploratória)
+
+Critério: maior `VUS_MAX` em que o síncrono fica abaixo de 1% de requisições falhas (timeout do k6 de 30 s ou 5xx) nas **rotas de usuários comuns** (`feed`, `propagation_tree`, `posts_create`, `share`). As ações de celebridade (`celebrity_post`, `celebrity_share`) ficam fora do critério porque estouram o timeout em todos os degraus medidos, inclusive com 10 VUs: o limiar original (~1% de `http_timeouts` no total) não era atingível em nenhum degrau, por um efeito do fan-out de celebridade e não do nível de carga. Valor anterior: 150 VUs (assumed, não medido), que saturava o síncrono (60% de falhas).
+
+Rampa de 2026-11-14 (`MODE=tcc`, `SCENARIO=mixed`, snapshot restaurado e warmup antes de cada degrau; uma execução por degrau, na máquina de desenvolvimento). Células: taxa de falha / p95.
+
+| `VUS_MAX` | feed | árvore | post comum | share comum | post celebridade | share celebridade | req/s |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 10 | 0% / 4,6 s | 0% / 3,2 s | 0% / 8,6 s | 0% / 8,4 s | 14,2% / 30 s | 36,3% / 30 s | 3,7 |
+| 15 | 0% / 9,8 s | 0% / 7 s | 0% / 9 s | 0% / 8 s | 35,2% / 30 s | 29,1% / 30 s | 3,9 |
+| **20** | 0% / 12,4 s | 0% / 13 s | 0% / 11 s | 0% / 13 s | 28,5% / 30 s | 35,2% / 30 s | 3,6 |
+| 25 | 0% / 16,4 s | 0% / 12 s | 0,9% / 13 s | 0,8% / 20 s | 15% / 30 s | 38% / 30 s | 4,1 |
+| 50 | 29,2% / 30 s | 23,2% / 30 s | 26,8% / 30 s | 30,4% / 30 s | 59% / 30 s | 77,2% / 30 s | 3,1 |
+| 100 | colapso: 50,8% de timeouts no total | | | | | | 3,7 |
+
+Escolhido 20: maior degrau sem nenhuma falha nas rotas comuns. Com 25 elas começam a falhar e com 50 todas colapsam. Mesmo no degrau moderado o p95 das rotas comuns fica entre 11 e 13 s: "moderado" significa que o síncrono ainda responde, não que responde rápido.
+
+Observações da rampa (não são resultados do TCC; servem só para calibrar a carga):
+
+- A vazão do síncrono ficou entre ~3 e 4 req/s em todos os degraus. Como o modelo é fechado (cada VU espera a resposta antes da próxima requisição), mais VUs aumentam a latência, não a vazão.
+- ⚠️ Inferred — not documented: cada post ou share de celebridade grava de 2000 a 5000 entradas de feed numa transação só; com escritas concorrentes, isso passa dos 30 s. Causa não investigada (locks do InnoDB, `pm.max_children` do PHP-FPM e limite de CPU do MySQL são candidatos).
+- Valores de uma única execução por degrau; variam com o host. Refazer a rampa se o host, os limites de CPU/memória ou o dataset mudarem.
 
 Métricas expostas:
 
