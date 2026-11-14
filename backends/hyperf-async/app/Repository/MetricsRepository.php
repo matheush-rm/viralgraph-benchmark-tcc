@@ -16,8 +16,14 @@ final class MetricsRepository
             CALL { MATCH (p:Post) RETURN count(p) AS posts_criados }
             CALL { MATCH ()-[s:SHARED]->() RETURN count(s) AS compartilhamentos }
             CALL { MATCH ()-[e:FEED]->() RETURN count(e) AS entradas_feed }
-            RETURN usuarios, usuarios AS feeds, relacoes_seguir, posts_criados, compartilhamentos, entradas_feed')[0];
+            CALL { MATCH (d:ShareDuplicate) RETURN count(d) AS deduplicados }
+            RETURN usuarios, usuarios AS feeds, relacoes_seguir, posts_criados, compartilhamentos, entradas_feed,
+                deduplicados')[0];
+        // Shares aceitos (202) e absorvidos pelo MERGE idempotente no worker; não é insert lógico.
+        $deduplicated = $r['deduplicados'];
+        unset($r['deduplicados']);
         $r['inserts_logicos'] = array_sum($r);
+        $r['compartilhamentos_deduplicados'] = $deduplicated;
         return $r;
     }
 }

@@ -11,6 +11,7 @@ namespace App\Infrastructure\Neo4j;
  *   (:User)-[:FEED]->(:Post)         entrada de feed (primeira entrega)
  *   (:User)-[:VIA]->(:Post)          cada caminho de entrega (auditoria)
  *   (:Task)                          outbox de distribuição
+ *   (:ShareDuplicate)                share aceito (202) absorvido pelo MERGE do worker (auditoria)
  */
 final class SchemaInitializer
 {
@@ -51,6 +52,9 @@ final class SchemaInitializer
         foreach (self::INDEXES as $name => $target) {
             $this->client->run("CREATE INDEX $name IF NOT EXISTS $target");
         }
+        // Nomeada para consulta direta (SHOW CONSTRAINTS). Roda a cada subida (INIT_SCHEMA=1, api1),
+        // inclusive após o restore: o snapshot não tem :ShareDuplicate, então não exige regerá-lo.
+        $this->client->run('CREATE CONSTRAINT share_duplicate_id IF NOT EXISTS FOR (d:ShareDuplicate) REQUIRE d.id IS UNIQUE');
         $this->client->run('CALL db.awaitIndexes(300)');
     }
 }

@@ -57,6 +57,8 @@ scripts/viral.sh obs up                       # Prometheus :9090, Grafana :3000,
 MODE=smoke scripts/viral.sh load sync         # 30 s, 50 VUs (SCENARIO padrão: mixed)
 make viral-tcc VIRAL_ARCH=async SCENARIO=fanout   # restore do snapshot + warmup + MODE=tcc (3 min)
 make viral-tcc-all VIRAL_ARCH=sync                # os 4 cenários, restore limpo antes de cada um
+make viral-tcc-levels VIRAL_ARCH=sync             # um cenário em cada degrau (VIRAL_LEVELS=150 600)
+scripts/viral.sh counts async                     # contagens direto no banco, a qualquer momento
 ```
 
 `SCENARIO` seleciona a mistura por iteração:
@@ -66,24 +68,67 @@ make viral-tcc-all VIRAL_ARCH=sync                # os 4 cenários, restore limp
 | `baseline` | 80% `GET /feed/:id` de comum; 20% escrita de comuns (metade `POST /posts`, metade `POST /posts/:id/share` com candidato válido) |
 | `fanout` | 80% ações de celebridades (metade `POST /posts`, metade `POST /posts/:id/share` de post viral alheio, origem = autor); 20% `GET /feed/:id` de comum |
 | `graph_read` | 90% `GET /posts/:id/propagation-tree` de post viral (Zipf `s=1,1` sobre o ranking de cascatas); 10% `GET /feed/:id` |
-| `mixed` (padrão) | 70% leitura (metade feed, metade árvore); 25% escrita de comuns; 5% celebridade publica |
+| `mixed` (padrão) | 70% leitura (metade feed, metade árvore); 25% escrita de comuns; 5% celebridade (metade post, metade share) |
 
-Celebridades não seguem ninguém no dataset, então não têm posts no feed; no `fanout` compartilham post viral de outro autor com origem = autor (a API não exige o post no feed, só origem válida), gerando fan-out para seus 2000+ seguidores. Cada par (celebridade, post) só vale uma vez (20 × ~150 pares); repetições retornam 422 e são contadas em `share_duplicates`, o que tende a crescer ao longo do `fanout`.
+Celebridades não seguem ninguém no dataset, então não têm posts no feed; no `fanout` e no `mixed` compartilham post viral de outro autor sorteado uniformemente do pool global de posts virais do snapshot com origem = autor (a API não exige o post no feed, só origem válida), gerando fan-out para seus 2000+ seguidores. Cada par (celebridade, post) só vale uma vez (20 × ~150 pares); repetições retornam 422 e são contadas em `share_duplicates`, o que tende a crescer ao longo do `fanout`.
 
-`MODE=tcc` dura 3 min: `VUS_MAX/2` (30 s) → `VUS_MAX` (30 s) → patamar (1m30) → 0 (30 s). Variáveis: `VUS_MAX`, `THINK_MIN_MS`/`THINK_MAX_MS` (padrão 50–250 ms), `ZIPF_S`. Resultados ficam em `code/k6/results/viral-<arch>-<mode>-<cenário>-<timestamp>/`; as séries do Prometheus recebem a tag `experiment=<cenário>`.
+`MODE=tcc` dura 3 min: `VUS_MAX/2` (30 s) → `VUS_MAX` (30 s) → patamar (1m30) → 0 (30 s). Variáveis: `VUS_MAX` (degrau de carga, ver abaixo), `THINK_MIN_MS`/`THINK_MAX_MS` (padrão 50–250 ms), `ZIPF_S`. Resultados ficam em `code/k6/results/viral-<arch>-<mode>-<cenário>[-vus<N>]-<timestamp>/` (o sufixo `-vus<N>` aparece só no `MODE=tcc`); as séries do Prometheus recebem as tags `experiment=<cenário>` e `vus_max=<N>`.
+
+### Degraus de carga
+
+Os resultados são separados em dois degraus, cada um sobre snapshot restaurado:
+
+| Degrau | `VUS_MAX` | Finalidade |
+| --- | --- | --- |
+| Moderado | 150 ⚠️ (assumed) | Carga em que a composição síncrona ainda responde dentro do timeout do k6, permitindo comparar a latência efetiva das duas composições. |
+| Estresse viral | 600 | Saturação: mostra como cada composição degrada (timeouts no síncrono, acúmulo de filas no assíncrono). |
+
+⚠️ Assumed: o valor de 150 VUs não foi medido. Antes da coleta final, escolher por rampa exploratória o maior degrau em que o síncrono fica abaixo de ~1% de `http_timeouts`, e registrar esse valor aqui. `VIRAL_LEVELS` altera a lista usada por `make viral-tcc-levels`.
 
 Métricas expostas:
 
 - resumo do k6 (`code/k6/results/viral-*/summary.json` e `output.log`): p50/p95/p99 e taxa de erro por rota (`name`), `http_5xx`, `http_timeouts`, `share_duplicates`;
 - `rabbitmq_queue_depth{queue}` (async): amostrado pelo k6 a cada 1 s no endpoint Prometheus do RabbitMQ;
 - Prometheus/Grafana (dashboard "TCC - Viralização"): séries `k6_*` via remote write, `rabbitmq_queue_messages`, CPU/memória por container (cAdvisor);
-- `/metricas` ao final, gravado em `metricas.json`.
+- `contagens.json`: aceitos × persistidos, lidos direto no banco (seção seguinte).
 
-O smoke reprova somente se houver 5xx. Latência alta e timeouts sob saturação são resultado do experimento, não falha do teste. Na composição assíncrona, uma consulta Neo4j acima de `NEO4J_TIMEOUT_MS` (10 s no benchmark) vira `503`, então a saturação aparece como 5xx; na síncrona aparece como latência ou timeout do k6 (30 s). Essa diferença precisa ser considerada ao comparar taxas de erro.
+O smoke reprova somente se 20% ou mais das requisições falharem (`http_req_failed{scenario:traffic}`), pois 50 VUs com share de celebridade já saturam as duas composições (503 por timeout do Neo4j; deadlock 1213 e timeout no MySQL). Ele valida a integridade do fluxo, a coleta no Prometheus e a geração de `contagens.json`, não desempenho. Latência alta e timeouts sob saturação são resultado do experimento, não falha do teste. Na composição assíncrona, uma consulta Neo4j acima de `NEO4J_TIMEOUT_MS` (10 s no benchmark) vira `503`, então a saturação aparece como 5xx; na síncrona aparece como latência ou timeout do k6 (30 s). Essa diferença precisa ser considerada ao comparar taxas de erro.
+
+## Aceitação × conclusão
+
+As duas composições confirmam coisas diferentes ao responder 2xx, e o resumo do k6 mede só a resposta. Por isso o script registra três quantidades distintas:
+
+| Quantidade | Origem | Síncrona (Laravel + MySQL) | Assíncrona (Hyperf + RabbitMQ + Neo4j) |
+| --- | --- | --- | --- |
+| **Aceitos** | respostas 2xx vistas pelo k6 (`summary.json`) | 201 = transação confirmada: post/share e fan-out no feed gravados antes da resposta | `POST /posts` 201 e share 202 = evento confirmado pelo broker; persistência e fan-out ainda não ocorreram |
+| **Persistidos ao fim da carga** | `COUNT` no banco quando o k6 termina | ≈ aceitos, mais requisições que o k6 abandonou por timeout e que o PHP-FPM ainda concluiu ⚠️ (inferred) | parte dos aceitos; o restante está nas filas ou na outbox (`Task.done=false`) |
+| **Persistidos após drenagem** | `COUNT` após filas e outbox vazias e contagens estáveis | igual ao anterior, salvo gravações tardias | aceitos menos duplicatas descartadas pelo consumer |
+
+Consequências para a análise:
+
+- Taxa de erro HTTP baixa no assíncrono não significa trabalho concluído. Uma comparação justa usa a latência de **aceitação** (k6) junto com o **tempo de drenagem** (`drenagem.segundos`), que mede quanto o sistema leva para tornar visível o que já aceitou.
+- No síncrono, `http_timeouts` não equivale a perda de escrita: a requisição pode ter sido gravada depois que o k6 desistiu. A diferença entre persistidos e aceitos quantifica esse efeito.
+- No assíncrono, shares duplicados ainda na fila recebem 202 e são descartados pelo consumer (`SHARED.key` é único), então persistidos podem ficar abaixo de aceitos sem que haja falha. O worker grava cada descarte como `(:ShareDuplicate {id})` (id da mensagem) na mesma transação do lote; o MERGE por id mantém a contagem exata mesmo quando o cliente Neo4j desiste por timeout, o commit ocorre no servidor e o lote é reenviado e registra `shares: lote=… deduplicados=…` no log; `/metricas` expõe o total como `compartilhamentos_deduplicados`. Após drenagem completa espera-se `aceitos.shares − persistidos_final.shares_deduplicados = persistidos_final.shares`.
+- Divergência de contrato: no Hyperf, `POST /posts` responde 201, embora só confirme a publicação no broker, como o share (202). A semântica efetiva é de aceitação.
+
+### `contagens.json`
+
+Gravado por `scripts/viral.sh load` em cada execução. As contagens vêm do banco (`COUNT(*)` no MySQL via `docker compose exec`; consulta Cypher pela API HTTP do Neo4j via `wget` dentro do container), e não de `/metricas`, que pode não responder com a API ainda saturada. A contagem inicial é feita após o aquecimento (só leitura), imediatamente antes da carga.
+
+| Campo | Conteúdo |
+| --- | --- |
+| `aceitos.posts` | sucessos de `posts_create` + `celebrity_post` |
+| `aceitos.shares` | sucessos de `share` + `celebrity_share` menos `share_duplicates` (422) |
+| `inicio`, `fim_carga`, `final` | `posts`, `shares`, `feed_items`, `tarefas_pendentes` (outbox; sempre 0 no síncrono) e `shares_deduplicados` (ver abaixo) |
+| `persistidos_fim_carga`, `persistidos_final` | diferença em relação a `inicio` |
+| `drenagem` | `completa`, `segundos` (do fim da carga à primeira leitura estável), `timeout_s`, `intervalo_s`, `filas_restantes` |
+
+A drenagem termina quando as filas do RabbitMQ (prontas + sem ack) e a outbox estão vazias e duas leituras seguidas coincidem, ou ao atingir `DRAIN_TIMEOUT_S` (padrão 900 s, também em `make`). `DRAIN_POLL_S` (padrão 5 s) define o intervalo e a resolução do tempo medido. Com `completa=false`, `final` traz a última leitura e `segundos` fica nulo.
 
 ## Limitações conhecidas
 
 - Execute uma arquitetura por vez: as duas compartilham a CPU do host.
-- O 202 do Hyperf não garante persistência; a fila e `/metricas` ao final indicam o que foi efetivamente gravado.
+- O 2xx do Hyperf não garante persistência; `contagens.json` (após drenagem) indica o que foi efetivamente gravado.
+- As leituras de drenagem rodam enquanto os workers ainda processam e disputam o mesmo host; o custo é pequeno (uma consulta de contagem por intervalo), mas não é nulo.
 - A validação do compartilhamento assíncrono usa o estado já persistido: duplicatas ainda na fila podem receber 202, e o consumer descarta a repetição.
 - O cAdvisor precisa da v0.55+ com o image store do containerd no Docker; a v0.52 não identificava os containers.
