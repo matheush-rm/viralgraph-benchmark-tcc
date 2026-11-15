@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bancada de viralização</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wdth,wght@75..100,400..700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 28 28" width="28" height="28"><circle cx="14" cy="14" r="5"/><circle cx="4" cy="5" r="2"/><circle cx="24" cy="4" r="2"/><circle cx="25" cy="21" r="2"/><circle cx="5" cy="23" r="2"/><circle cx="14" cy="26" r="1.5"/><path d="M14 14 4 5M14 14 24 4M14 14l11 7M14 14 5 23M14 14v12"/></svg>
+      </span>
+      <div>
+        <strong>Bancada de viralização</strong>
+        <span class="brand-sub">Laravel + MySQL contra Hyperf + RabbitMQ + Neo4j</span>
+      </div>
+    </div>
+    <nav class="tabs" role="tablist" aria-label="Seções">
+      <a role="tab" href="#arquiteturas" data-tab="arquiteturas">Arquiteturas</a>
+      <a role="tab" href="#execucao" data-tab="execucao">Execução</a>
+      <a role="tab" href="#comparacao" data-tab="comparacao">Comparação</a>
+    </nav>
+    <a class="run-pill" id="run-pill" href="#execucao" data-state="idle">
+      <span class="dot" aria-hidden="true"></span><span id="run-pill-text">Nenhum experimento rodando</span>
+    </a>
+  </header>
+
+  <main>
+    <!-- ============================================================ ARQUITETURAS -->
+    <section id="tab-arquiteturas" class="tab" role="tabpanel" hidden>
+      <div class="hero">
+        <div class="hero-copy">
+          <h1 id="hero-title">20 celebridades concentram boa parte das relações de seguir.</h1>
+          <p>
+            O dataset segue uma Zipf truncada: 10.000 usuários comuns têm entre 1 e 30 seguidores
+            (mediana <span id="ds-median">4</span>), enquanto 20 celebridades têm de 2.150 a 5.000.
+            Cada post ou compartilhamento de celebridade obriga o backend a gravar milhares de entradas de feed
+            de uma vez. É esse pico de grau que as duas composições recebem, com o mesmo orçamento de
+            <strong>1,5 CPU e 3 GB</strong>.
+          </p>
+          <dl class="ds-facts" id="ds-facts"></dl>
+        </div>
+        <figure class="zipf" aria-labelledby="zipf-cap">
+          <svg id="zipf-chart" role="img" aria-label="Seguidores por usuário, ordenados por posição"></svg>
+          <figcaption id="zipf-cap">Seguidores por usuário, do rank 1 ao 20 (celebridades) e a cauda de usuários comuns na mesma escala.</figcaption>
+        </figure>
+      </div>
+
+      <h2>Caminho de uma escrita</h2>
+      <p class="lede">Mesma rota, mesmo contrato de API. O que muda é quando o 2xx é devolvido e quem paga o fan-out.</p>
+
+      <article class="lane lane-sync">
+        <header class="lane-head">
+          <h3><span class="swatch sync"></span>Síncrona: Laravel (PHP-FPM) + MySQL</h3>
+          <p>O fan-out acontece dentro da requisição HTTP. O <code>201</code> só sai depois do <code>COMMIT</code>.</p>
+        </header>
+        <div class="diagram-scroll"><svg class="diagram" id="diagram-sync" viewBox="0 0 960 200" role="img" aria-label="Fluxo síncrono"></svg></div>
+        <div class="budget" id="budget-sync"></div>
+      </article>
+
+      <article class="lane lane-async">
+        <header class="lane-head">
+          <h3><span class="swatch async"></span>Orientada a eventos: Hyperf (Swoole) + RabbitMQ + Neo4j</h3>
+          <p>A API publica o evento e responde. Um worker em corrotinas consome em lotes e grava com <code>UNWIND</code>.</p>
+        </header>
+        <div class="diagram-scroll"><svg class="diagram" id="diagram-async" viewBox="0 0 960 296" role="img" aria-label="Fluxo assíncrono"></svg></div>
+        <div class="budget" id="budget-async"></div>
+      </article>
+
+      <h2>Mistura de tráfego</h2>
+      <p class="lede">Cada iteração do k6 sorteia uma ação. O cenário <code>mixed</code> é o padrão.</p>
+      <div class="mix" id="mix-mixed"></div>
+      <table class="plain scenarios">
+        <thead><tr><th>Cenário</th><th>Mistura por iteração</th></tr></thead>
+        <tbody>
+          <tr><td><code>mixed</code></td><td>70% leitura (metade feed, metade árvore de propagação), 25% escrita de comuns, 5% ações de celebridade</td></tr>
+          <tr><td><code>baseline</code></td><td>80% <code>GET /feed/:id</code> de comum, 20% escrita de comuns (metade post, metade share)</td></tr>
+          <tr><td><code>fanout</code></td><td>80% ações de celebridade (metade post, metade share de post viral alheio), 20% feed</td></tr>
+          <tr><td><code>graph_read</code></td><td>90% árvore de propagação de post viral (Zipf s = 1,1 sobre o ranking de cascatas), 10% feed</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Degraus de carga no modo tcc</h2>
+      <div class="levels">
+        <div>
+          <p class="level-num">20 VUs</p>
+          <p>Degrau moderado. Maior carga em que a síncrona não falha nenhuma rota de usuário comum dentro do timeout de 30 s do k6.</p>
+        </div>
+        <div>
+          <p class="level-num">600 VUs</p>
+          <p>Estresse viral. Satura as duas composições: timeouts na síncrona, filas acumuladas na assíncrona.</p>
+        </div>
+        <div>
+          <p class="level-num">3 min</p>
+          <p>Rampa até metade do degrau (30 s), degrau cheio (30 s), patamar (1m30), descida (30 s). O smoke roda 30 s com 50 VUs.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ EXECUÇÃO -->
+    <section id="tab-execucao" class="tab" role="tabpanel" hidden>
+      <div class="exec">
+        <form class="exec-form" id="run-form" autocomplete="off">
+          <h2>Novo experimento</h2>
+
+          <fieldset class="seg" id="f-arch">
+            <legend>Arquitetura</legend>
+            <label><input type="radio" name="arch" value="sync" checked><span><i class="swatch sync"></i>Síncrona</span></label>
+            <label><input type="radio" name="arch" value="async"><span><i class="swatch async"></i>Assíncrona</span></label>
+          </fieldset>
+
+          <fieldset class="seg" id="f-mode">
+            <legend>Modo</legend>
+            <label><input type="radio" name="mode" value="smoke" checked><span>Smoke, 30 s</span></label>
+            <label><input type="radio" name="mode" value="tcc"><span>TCC, 3 min</span></label>
+          </fieldset>
+
+          <label class="field">
+            <span>Cenário</span>
+            <select name="scenario">
+              <option value="mixed">mixed (70% leitura, 25% escrita, 5% celebridade)</option>
+              <option value="baseline">baseline</option>
+              <option value="fanout">fanout</option>
+              <option value="graph_read">graph_read</option>
+            </select>
+          </label>
+
+          <fieldset class="seg" id="f-vus" data-only="tcc">
+            <legend>Degrau (VUS_MAX)</legend>
+            <label><input type="radio" name="vus" value="20"><span>20, moderado</span></label>
+            <label><input type="radio" name="vus" value="600" checked><span>600, estresse</span></label>
+          </fieldset>
+
+          <label class="check" data-only="smoke">
+            <input type="checkbox" name="restore">
+            <span>Restaurar o snapshot antes da carga</span>
+          </label>
+          <p class="hint" data-only="tcc">O modo tcc sempre restaura o snapshot limpo e faz o aquecimento antes da carga.</p>
+
+          <div class="cmd-preview">
+            <span>Comando</span>
+            <code id="cmd-preview"></code>
+          </div>
+
+          <div class="exec-actions">
+            <button type="submit" class="btn primary" id="btn-run">Executar experimento</button>
+            <button type="button" class="btn danger" id="btn-abort" hidden>Abortar experimento</button>
+          </div>
+          <p class="form-error" id="form-error" role="alert" hidden></p>
+          <p class="hint">Rode uma arquitetura por vez: as duas disputam a mesma CPU do host. O painel aceita um experimento de cada vez.</p>
+        </form>
+
+        <div class="exec-live">
+          <ol class="phases" id="phases">
+            <li data-phase="restore"><span class="ph-mark"></span><span class="ph-name">Restaurando snapshot</span><span class="ph-time"></span></li>
+            <li data-phase="warmup"><span class="ph-mark"></span><span class="ph-name">Aquecimento (só leitura)</span><span class="ph-time"></span></li>
+            <li data-phase="load"><span class="ph-mark"></span><span class="ph-name">Carga k6</span><span class="ph-time"></span></li>
+            <li data-phase="drain"><span class="ph-mark"></span><span class="ph-name">Drenando filas e contando</span><span class="ph-time"></span></li>
+            <li data-phase="done"><span class="ph-mark"></span><span class="ph-name">Concluído</span><span class="ph-time"></span></li>
+          </ol>
+          <div class="run-meta" id="run-meta"></div>
+          <div class="console-wrap">
+            <div class="console-bar">
+              <span id="console-title">Console</span>
+              <label class="check small"><input type="checkbox" id="opt-progress" checked><span>Ocultar progresso do k6</span></label>
+              <label class="check small"><input type="checkbox" id="opt-follow" checked><span>Acompanhar o fim</span></label>
+            </div>
+            <pre class="console" id="console" aria-live="off" tabindex="0"><span class="muted">Os logs aparecem aqui quando um experimento começa.</span></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ COMPARAÇÃO -->
+    <section id="tab-comparacao" class="tab" role="tabpanel" hidden>
+      <div class="cmp-head">
+        <h2>Execuções salvas</h2>
+        <div class="filters" id="filters">
+          <select data-filter="arch" aria-label="Filtrar arquitetura"><option value="">Todas as arquiteturas</option><option value="sync">Síncrona</option><option value="async">Assíncrona</option></select>
+          <select data-filter="mode" aria-label="Filtrar modo"><option value="">Todos os modos</option><option value="tcc">tcc</option><option value="smoke">smoke</option></select>
+          <select data-filter="scenario" aria-label="Filtrar cenário"><option value="">Todos os cenários</option><option>mixed</option><option>baseline</option><option>fanout</option><option>graph_read</option></select>
+          <select data-filter="vus" aria-label="Filtrar degrau"><option value="">Todos os degraus</option></select>
+          <button type="button" class="btn ghost" id="btn-reload">Recarregar</button>
+        </div>
+      </div>
+      <div class="runs-scroll">
+        <table class="runs" id="runs-table">
+          <thead><tr><th class="c-check"><span class="sr">Selecionar</span></th><th>Arquitetura</th><th>Modo</th><th>Cenário</th><th class="num">VUs</th><th>Início (local)</th><th class="num">req/s</th><th class="num">Falha HTTP</th><th class="num">p95</th><th class="num">Drenagem</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="hint" id="runs-hint"></p>
+
+      <div id="cmp-body" hidden>
+        <div class="cmp-toolbar">
+          <div class="legend" id="legend"></div>
+          <div class="export">
+            <button type="button" class="btn ghost" id="btn-md">Copiar Markdown</button>
+            <button type="button" class="btn ghost" id="btn-csv">Baixar CSV</button>
+            <span class="toast" id="toast" role="status"></span>
+          </div>
+        </div>
+
+        <p class="hint" id="cmp-context"></p>
+        <div class="cards" id="cards"></div>
+        <p class="footnote">Vazão e taxa de falha consideram só o cenário de tráfego. Os percentis gerais incluem a sonda da fila do RabbitMQ (1 VU, assíncrona), que não existe na síncrona. Na assíncrona, consulta Neo4j acima de 10 s vira 503; na síncrona, a saturação aparece como timeout de 30 s do k6.</p>
+
+        <div class="chart-block">
+          <div class="chart-head">
+            <h3>Latência por rota</h3>
+            <div class="seg compact" id="lat-metric">
+              <label><input type="radio" name="latm" value="p50"><span>p50</span></label>
+              <label><input type="radio" name="latm" value="p95" checked><span>p95</span></label>
+              <label><input type="radio" name="latm" value="p99"><span>p99</span></label>
+            </div>
+          </div>
+          <div id="chart-latency" class="chart"></div>
+        </div>
+        <div class="chart-block">
+          <div class="chart-head"><h3>Taxa de falha por rota</h3></div>
+          <div id="chart-fail" class="chart"></div>
+        </div>
+
+        <h3>Auditoria de consistência eventual</h3>
+        <p class="lede">Aceitos são os 2xx vistos pelo k6. Persistidos são diferenças de <code>COUNT</code> no banco em relação ao início da carga.</p>
+        <div class="runs-scroll"><table class="audit" id="audit"></table></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
