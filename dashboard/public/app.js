@@ -142,11 +142,11 @@ const markerDefs = () => h('defs', {}, h('marker', { id: 'arrow', viewBox: '0 0 
 function drawDiagrams() {
   const s = $('#diagram-sync');
   s.replaceChildren(markerDefs(),
-    node(10, 40, 130, 'Usuários simulados', 'k6, até 600 juntos', 'pedem e esperam'),
-    node(180, 40, 140, 'Porta de entrada', 'nginx', 'divide entre 2 servidores'),
+    node(10, 40, 152, 'Usuários simulados', 'k6, até 600 juntos', 'pedem e esperam'),
+    node(180, 40, 154, 'Porta de entrada', 'nginx', 'divide entre 2 servidores'),
     node(360, 40, 200, 'Aplicação (2 cópias)', 'Laravel, PHP-FPM', 'processa um pedido por vez', true),
     node(640, 40, 310, 'Banco de dados', 'MySQL', 'grava o post e o feed de cada seguidor', true),
-    edge('M140 76H178'), edge('M320 76H358'), edge('M560 76H638'),
+    edge('M162 76H178'), edge('M334 76H358'), edge('M560 76H638'),
     label(600, 64, 'grava tudo'),
     edge('M795 112V160H75V114', 'ret'),
     label(432, 152, 'Só responde “publicado” depois que todos os feeds foram gravados', 'strong'),
@@ -154,13 +154,13 @@ function drawDiagrams() {
   );
   const a = $('#diagram-async');
   a.replaceChildren(markerDefs(),
-    node(10, 56, 130, 'Usuários simulados', 'k6, até 600 juntos', 'pedem e esperam'),
-    node(180, 56, 140, 'Porta de entrada', 'nginx', 'divide entre 2 servidores'),
+    node(10, 56, 152, 'Usuários simulados', 'k6, até 600 juntos', 'pedem e esperam'),
+    node(180, 56, 154, 'Porta de entrada', 'nginx', 'divide entre 2 servidores'),
     node(360, 56, 200, 'Aplicação (2 cópias)', 'Hyperf, Swoole', 'muitos pedidos em paralelo', true),
     node(640, 56, 310, 'Fila de pedidos', 'RabbitMQ', 'guarda o pedido até alguém processar', true),
     node(640, 180, 310, 'Processador da fila', 'worker Hyperf', 'pega até 50 pedidos e grava em lote', true),
     node(360, 180, 200, 'Banco de grafos', 'Neo4j', 'pessoas e posts ligados em rede', true),
-    edge('M140 92H178'), edge('M320 92H358'), edge('M560 92H638'),
+    edge('M162 92H178'), edge('M334 92H358'), edge('M560 92H638'),
     label(600, 80, 'anota'),
     edge('M795 128V178'), label(805, 158, 'retira da fila', '', 'start'),
     edge('M640 216H562'), label(600, 206, 'grava'),

@@ -141,12 +141,12 @@ main { max-width: 1240px; margin: 0 auto; padding: 2rem 2rem 5rem; }
 .diagram .e-label.strong { fill: var(--ink); font-weight: 650; }
 .diagram marker path { fill: var(--ink-2); }
 
-.budget { margin-top: 1rem; display: grid; gap: .5rem; }
-.budget-row { display: grid; grid-template-columns: 4.5rem 1fr 4.5rem; gap: .75rem; align-items: center; font-size: .8125rem; }
+.budget { margin-top: 1rem; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: .5rem .75rem; align-items: center; font-size: .8125rem; }
+.budget-row { display: contents; }
 .budget-row > span:first-child { color: var(--ink-3); }
 .budget-row > span:last-child { text-align: right; font-weight: 600; }
 .budget-bar { display: flex; height: 22px; border-radius: 3px; overflow: hidden; background: var(--rule-2); }
-.budget-bar span { display: flex; align-items: center; padding: 0 .4rem; font-size: .75rem; white-space: nowrap; overflow: hidden; color: var(--ink); border-right: 2px solid var(--surface); }
+.budget-bar span { display: block; line-height: 22px; min-width: 0; text-overflow: ellipsis; padding: 0 .4rem; font-size: .75rem; white-space: nowrap; overflow: hidden; color: var(--ink); border-right: 2px solid var(--surface); }
 .lane-sync .budget-bar span { background: var(--sync-tint); }
 .lane-async .budget-bar span { background: var(--async-tint); }
 .lane-sync .budget-bar span.store { background: var(--sync); color: var(--surface); }
@@ -329,7 +329,7 @@ table.audit td .sub { display: block; font-size: .75rem; color: var(--ink-3); wh
   .ph-time { display: inline; margin-left: .4rem; }
   .ph-name { display: inline; }
   .mix span { display: none; }
-  .budget-row { grid-template-columns: 3.5rem 1fr 3.5rem; }
+  .budget { gap: .5rem; font-size: .75rem; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
