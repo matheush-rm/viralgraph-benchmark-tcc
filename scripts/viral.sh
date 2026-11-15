@@ -10,6 +10,8 @@
 #   MODE=smoke|tcc SCENARIO=baseline|fanout|graph_read|mixed scripts/viral.sh load sync|async
 #                                            (roda warmup antes; WARMUP=0 desliga)
 #   SCENARIO=... scripts/viral.sh tcc sync|async   restore + load MODE=tcc (snapshot limpo)
+#   MODE=smoke|tcc scripts/viral.sh baseline sync|async   GET /usuarios/{id} puro (controle;
+#                                            ver code/docs/baseline-user-lookup.md)
 #   scripts/viral.sh counts   sync|async     contagens direto no banco (posts, shares, feed, outbox)
 #
 # VUS_MAX define o degrau de carga do MODE=tcc (padrão 600). Ao fim da carga, o script conta direto
@@ -257,6 +259,32 @@ cmd_load() {
   return "$rc"
 }
 
+# Baseline (controle): GET /usuarios/{id} puro, Pareto 80/20 sobre o dataset (ver
+# code/docs/baseline-user-lookup.md). Sem escrita: não há drenagem nem contagens de aceitos;
+# /metricas antes e depois prova que a carga de leitura não alterou o estado persistido.
+cmd_baseline() {
+  local arch="$1" port out rc=0
+  require_dataset
+  port="$(port_of "$arch")"
+  out="$ROOT/code/k6/results/baseline-$arch-${MODE:-smoke}-$(date -u +%Y%m%dT%H%M%SZ)"
+  mkdir -p "$out"
+  local outputs=()
+  if curl -fsS -o /dev/null "http://127.0.0.1:9090/-/ready" 2>/dev/null; then
+    outputs=(-o experimental-prometheus-rw)
+    export K6_PROMETHEUS_RW_SERVER_URL="http://127.0.0.1:9090/api/v1/write"
+    export K6_PROMETHEUS_RW_TREND_STATS="p(50),p(95),p(99),avg,max"
+  fi
+  curl -fsS "http://127.0.0.1:$port/metricas" > "$out/metricas-antes.json" || true
+  log "k6 $arch MODE=${MODE:-smoke} baseline_user_lookup -> $out"
+  MODE="${MODE:-smoke}" BASE_URL="http://127.0.0.1:$port" \
+    DATASET="$DATASET/k6/dataset.json" \
+    k6 run "${outputs[@]}" --tag "arch=$arch" --tag "mode=${MODE:-smoke}" --tag "experiment=user_lookup" \
+      --summary-export "$out/summary.json" "$ROOT/code/k6/baseline_user_lookup.js" 2>&1 | tee "$out/output.log" || rc=$?
+  curl -fsS "http://127.0.0.1:$port/metricas" > "$out/metricas.json" || true
+  log "métricas finais: $(cat "$out/metricas.json" 2>/dev/null)"
+  return "$rc"
+}
+
 case "${1:-}" in
   dataset) shift; cmd_dataset "$@" ;;
   snapshot) cmd_snapshot "${2:?sync|async}" ;;
@@ -265,6 +293,7 @@ case "${1:-}" in
   down) cmd_down "${2:?sync|async}" ;;
   obs) cmd_obs "${2:-up}" ;;
   load) cmd_load "${2:?sync|async}" ;;
+  baseline) cmd_baseline "${2:?sync|async}" ;;
   counts) cmd_counts "${2:?sync|async}" ;;
   tcc) cmd_restore "${2:?sync|async}"; MODE=tcc cmd_load "$2" ;;
   *) sed -n '2,20p' "$0"; exit 1 ;;

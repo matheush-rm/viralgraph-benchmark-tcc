@@ -6,6 +6,7 @@ x-app: &app
     NEO4J_URL: http://neo4j:7474
     NEO4J_PASSWORD: ${NEO4J_PASSWORD:-benchmark-local}
     NEO4J_POOL_SIZE: ${NEO4J_POOL_SIZE:-32}
+    SCAN_CACHEABLE: ${SCAN_CACHEABLE:-true}
     FEED_PARALLEL: ${FEED_PARALLEL:-false}
     RABBITMQ_HOST: rabbitmq
     RABBITMQ_USER: benchmark
@@ -31,7 +32,7 @@ services:
     image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
     ports: ["127.0.0.1:9999:80"]
     volumes: ["./nginx.conf:/etc/nginx/nginx.conf:ro"]
-    cpus: ${NGINX_CPUS:-0.10}
+    cpus: ${NGINX_CPUS:-0.05}
     ulimits:
       nofile:
         soft: 8192
@@ -55,18 +56,18 @@ services:
     depends_on:
       neo4j: {condition: service_healthy}
       rabbitmq: {condition: service_healthy}
-    cpus: ${API_CPUS:-0.20}
+    cpus: ${API_CPUS:-0.45}
     mem_limit: ${API_MEMORY:-320m}
     memswap_limit: ${API_MEMORY:-320m}
   api2:
     <<: *app
-    cpus: ${API_CPUS:-0.20}
+    cpus: ${API_CPUS:-0.45}
     mem_limit: ${API_MEMORY:-320m}
     memswap_limit: ${API_MEMORY:-320m}
   worker:
     <<: *app
     command: ["php", "bin/worker.php"]
-    cpus: ${WORKER_CPUS:-0.30}
+    cpus: ${WORKER_CPUS:-0.05}
     mem_limit: ${WORKER_MEMORY:-384m}
     memswap_limit: ${WORKER_MEMORY:-384m}
     healthcheck:
@@ -87,7 +88,7 @@ services:
       # Plugin Prometheus (porta 15692): profundidade das filas para a observabilidade.
       - ./docker/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
     ports: ["127.0.0.1:${RABBITMQ_METRICS_PORT:-15692}:15692"]
-    cpus: ${RABBITMQ_CPUS:-0.20}
+    cpus: ${RABBITMQ_CPUS:-0.05}
     mem_limit: ${RABBITMQ_MEMORY:-512m}
     memswap_limit: ${RABBITMQ_MEMORY:-512m}
     healthcheck:
@@ -102,11 +103,12 @@ services:
       NEO4J_server_memory_heap_initial__size: 256m
       NEO4J_server_memory_heap_max__size: 512m
       NEO4J_server_memory_pagecache_size: 256m
-      NEO4J_server_jvm_additional: "-XX:ActiveProcessorCount=1"
-      # ActiveProcessorCount=1 reduz o Jetty a uma thread; a API HTTP serializaria todas as transações.
+      NEO4J_server_jvm_additional: "-XX:ActiveProcessorCount=2"
+      # ActiveProcessorCount=2 acompanha o rebalanceamento (neo4j 0.45 CPU): permite ao Jetty
+      # mais de uma thread para o endpoint HTTP transacional, evitando serializar as leituras.
       NEO4J_server_threads_worker__count: ${NEO4J_HTTP_THREADS:-32}
     volumes: ["neo4j:/data"]
-    cpus: ${NEO4J_CPUS:-0.50}
+    cpus: ${NEO4J_CPUS:-0.45}
     mem_limit: ${NEO4J_MEMORY:-1400m}
     memswap_limit: ${NEO4J_MEMORY:-1400m}
     healthcheck:

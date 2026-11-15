@@ -46,3 +46,19 @@ viral-tcc-all:
 # Um cenário em cada degrau de VIRAL_LEVELS, restore limpo antes de cada um.
 viral-tcc-levels:
 	set -e; for v in $(VIRAL_LEVELS); do SCENARIO=$(SCENARIO) VUS_MAX=$$v bash scripts/viral.sh tcc $(VIRAL_ARCH); done
+
+# Baseline (controle): busca de perfil por ID sob alta concorrência (ver code/docs/baseline-user-lookup.md).
+# Cada target restaura o snapshot limpo antes da carga; sem warmup (a carga é só de leitura).
+.PHONY: baseline-smoke-sync baseline-smoke-async baseline-tcc-sync baseline-tcc-async resultados
+baseline-smoke-sync:
+	bash scripts/viral.sh restore sync && MODE=smoke bash scripts/viral.sh baseline sync
+baseline-smoke-async:
+	bash scripts/viral.sh restore async && MODE=smoke bash scripts/viral.sh baseline async
+baseline-tcc-sync:
+	bash scripts/viral.sh restore sync && MODE=tcc bash scripts/viral.sh baseline sync
+baseline-tcc-async:
+	bash scripts/viral.sh restore async && MODE=tcc bash scripts/viral.sh baseline async
+
+# Relatório de resultados gerado a partir de code/k6/results (não editar à mão).
+resultados:
+	python3 scripts/resultados.py

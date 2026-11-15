@@ -1,6 +1,6 @@
 # Cenário de viralização: dataset Zipf, snapshot e carga k6
 
-Roteiro de execução do teste que compara as duas composições sob compartilhamentos em cascata e picos de fan-out de celebridades. Este documento descreve o procedimento; **não contém resultados**. Os números de smoke citados abaixo servem apenas para mostrar que o fluxo funciona e não devem ser usados no artigo.
+Roteiro de execução do teste que compara as duas composições sob compartilhamentos em cascata e picos de fan-out de celebridades. Este documento descreve o procedimento; **não contém resultados**. Os números de smoke citados abaixo servem apenas para mostrar que o fluxo funciona e não devem ser usados no artigo. O cenário de controle de leitura (`GET /usuarios/{id}`, sem escrita) é descrito em [baseline-user-lookup.md](baseline-user-lookup.md); a visão comparativa de todos os cenários fica em [cenarios.md](cenarios.md), e os números coletados, em [resultados.md](resultados.md).
 
 ## Endpoints exercitados
 
