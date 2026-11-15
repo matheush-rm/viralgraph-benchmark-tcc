@@ -1,0 +1,8 @@
+{
+  "name": "tcc-dashboard",
+  "private": true,
+  "type": "module",
+  "description": "Painel local de controle e comparação dos experimentos de viralização",
+  "scripts": { "start": "node server.mjs" },
+  "engines": { "node": ">=18" }
+}
