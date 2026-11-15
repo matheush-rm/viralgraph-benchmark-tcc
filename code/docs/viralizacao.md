@@ -54,34 +54,104 @@ A geração do snapshot é feita uma vez. Na máquina de desenvolvimento ⚠️ 
 
 ```bash
 scripts/viral.sh obs up                       # Prometheus :9090, Grafana :3000, cAdvisor :8088
-MODE=smoke scripts/viral.sh load sync         # 30 s, 50 VUs
-MODE=tcc   scripts/viral.sh load async        # ~8 min, rampa até VUS_MAX (padrão 600)
+MODE=smoke scripts/viral.sh load sync         # 30 s, 50 VUs (SCENARIO padrão: mixed)
+make viral-tcc VIRAL_ARCH=async SCENARIO=fanout   # restore do snapshot + warmup + MODE=tcc (3 min)
+make viral-tcc-all VIRAL_ARCH=sync                # os 4 cenários, restore limpo antes de cada um
+make viral-tcc-levels VIRAL_ARCH=sync             # um cenário em cada degrau (VIRAL_LEVELS=20 600)
+scripts/viral.sh counts async                     # contagens direto no banco, a qualquer momento
 ```
 
-Mistura por iteração:
+`SCENARIO` seleciona a mistura por iteração:
 
-| Fatia | Ação |
+| Cenário | Mistura |
 | --- | --- |
-| 70% | leitura: metade feed de usuário comum aleatório, metade árvore de post viral (Zipf `s=1,1` sobre o ranking de cascatas) |
-| 25% | escrita de comuns: metade `POST /posts`, metade `POST /posts/:id/share` com candidato válido |
-| 5% | celebridade publica (fan-out para 2000+ seguidores) |
+| `baseline` | 80% `GET /feed/:id` de comum; 20% escrita de comuns (metade `POST /posts`, metade `POST /posts/:id/share` com candidato válido) |
+| `fanout` | 80% ações de celebridades (metade `POST /posts`, metade `POST /posts/:id/share` de post viral alheio, origem = autor); 20% `GET /feed/:id` de comum |
+| `graph_read` | 90% `GET /posts/:id/propagation-tree` de post viral (Zipf `s=1,1` sobre o ranking de cascatas); 10% `GET /feed/:id` |
+| `mixed` (padrão) | 70% leitura (metade feed, metade árvore); 25% escrita de comuns; 5% celebridade (metade post, metade share) |
 
-Celebridades não seguem ninguém no dataset, então não têm posts no feed e não compartilham; sua ação é a publicação. Repetições de compartilhamento retornam 422 e são contadas em `share_duplicates`.
+Celebridades não seguem ninguém no dataset, então não têm posts no feed; no `fanout` e no `mixed` compartilham post viral de outro autor sorteado uniformemente do pool global de posts virais do snapshot com origem = autor (a API não exige o post no feed, só origem válida), gerando fan-out para seus 2000+ seguidores. Cada par (celebridade, post) só vale uma vez (20 × ~150 pares); repetições retornam 422 e são contadas em `share_duplicates`, o que tende a crescer ao longo do `fanout`.
 
-`MODE=tcc` faz rampa `VUS_MAX/6` (1 min) → `VUS_MAX/2` (2 min) → `VUS_MAX` (2 min) → patamar (2 min) → 0 (1 min). Variáveis: `VUS_MAX`, `THINK_MIN_MS`/`THINK_MAX_MS` (padrão 50–250 ms), `ZIPF_S`.
+`MODE=tcc` dura 3 min: `VUS_MAX/2` (30 s) → `VUS_MAX` (30 s) → patamar (1m30) → 0 (30 s). Variáveis: `VUS_MAX` (degrau de carga, ver abaixo), `THINK_MIN_MS`/`THINK_MAX_MS` (padrão 50–250 ms), `ZIPF_S`. Resultados ficam em `code/k6/results/viral-<arch>-<mode>-<cenário>[-vus<N>]-<timestamp>/` (o sufixo `-vus<N>` aparece só no `MODE=tcc`); as séries do Prometheus recebem as tags `experiment=<cenário>` e `vus_max=<N>`.
+
+### Degraus de carga
+
+Os resultados são separados em dois degraus, cada um sobre snapshot restaurado:
+
+| Degrau | `VUS_MAX` | Finalidade |
+| --- | --- | --- |
+| Moderado | 20 | Carga em que a composição síncrona ainda responde às rotas de usuários comuns dentro do timeout do k6, permitindo comparar a latência efetiva das duas composições. |
+| Estresse viral | 600 | Saturação: mostra como cada composição degrada (timeouts no síncrono, acúmulo de filas no assíncrono). |
+
+`VIRAL_LEVELS` altera a lista usada por `make viral-tcc-levels`.
+
+#### Escolha do degrau moderado (rampa exploratória)
+
+Critério: maior `VUS_MAX` em que o síncrono fica abaixo de 1% de requisições falhas (timeout do k6 de 30 s ou 5xx) nas **rotas de usuários comuns** (`feed`, `propagation_tree`, `posts_create`, `share`). As ações de celebridade (`celebrity_post`, `celebrity_share`) ficam fora do critério porque estouram o timeout em todos os degraus medidos, inclusive com 10 VUs: o limiar original (~1% de `http_timeouts` no total) não era atingível em nenhum degrau, por um efeito do fan-out de celebridade e não do nível de carga. Valor anterior: 150 VUs (assumed, não medido), que saturava o síncrono (60% de falhas).
+
+Rampa de 2026-11-14 (`MODE=tcc`, `SCENARIO=mixed`, snapshot restaurado e warmup antes de cada degrau; uma execução por degrau, na máquina de desenvolvimento). Células: taxa de falha / p95.
+
+| `VUS_MAX` | feed | árvore | post comum | share comum | post celebridade | share celebridade | req/s |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 10 | 0% / 4,6 s | 0% / 3,2 s | 0% / 8,6 s | 0% / 8,4 s | 14,2% / 30 s | 36,3% / 30 s | 3,7 |
+| 15 | 0% / 9,8 s | 0% / 7 s | 0% / 9 s | 0% / 8 s | 35,2% / 30 s | 29,1% / 30 s | 3,9 |
+| **20** | 0% / 12,4 s | 0% / 13 s | 0% / 11 s | 0% / 13 s | 28,5% / 30 s | 35,2% / 30 s | 3,6 |
+| 25 | 0% / 16,4 s | 0% / 12 s | 0,9% / 13 s | 0,8% / 20 s | 15% / 30 s | 38% / 30 s | 4,1 |
+| 50 | 29,2% / 30 s | 23,2% / 30 s | 26,8% / 30 s | 30,4% / 30 s | 59% / 30 s | 77,2% / 30 s | 3,1 |
+| 100 | colapso: 50,8% de timeouts no total | | | | | | 3,7 |
+
+Escolhido 20: maior degrau sem nenhuma falha nas rotas comuns. Com 25 elas começam a falhar e com 50 todas colapsam. Mesmo no degrau moderado o p95 das rotas comuns fica entre 11 e 13 s: "moderado" significa que o síncrono ainda responde, não que responde rápido.
+
+Observações da rampa (não são resultados do TCC; servem só para calibrar a carga):
+
+- A vazão do síncrono ficou entre ~3 e 4 req/s em todos os degraus. Como o modelo é fechado (cada VU espera a resposta antes da próxima requisição), mais VUs aumentam a latência, não a vazão.
+- ⚠️ Inferred — not documented: cada post ou share de celebridade grava de 2000 a 5000 entradas de feed numa transação só; com escritas concorrentes, isso passa dos 30 s. Causa não investigada (locks do InnoDB, `pm.max_children` do PHP-FPM e limite de CPU do MySQL são candidatos).
+- Valores de uma única execução por degrau; variam com o host. Refazer a rampa se o host, os limites de CPU/memória ou o dataset mudarem.
 
 Métricas expostas:
 
 - resumo do k6 (`code/k6/results/viral-*/summary.json` e `output.log`): p50/p95/p99 e taxa de erro por rota (`name`), `http_5xx`, `http_timeouts`, `share_duplicates`;
 - `rabbitmq_queue_depth{queue}` (async): amostrado pelo k6 a cada 1 s no endpoint Prometheus do RabbitMQ;
 - Prometheus/Grafana (dashboard "TCC - Viralização"): séries `k6_*` via remote write, `rabbitmq_queue_messages`, CPU/memória por container (cAdvisor);
-- `/metricas` ao final, gravado em `metricas.json`.
+- `contagens.json`: aceitos × persistidos, lidos direto no banco (seção seguinte).
 
-O smoke reprova somente se houver 5xx. Latência alta e timeouts sob saturação são resultado do experimento, não falha do teste. Na composição assíncrona, uma consulta Neo4j acima de `NEO4J_TIMEOUT_MS` (10 s no benchmark) vira `503`, então a saturação aparece como 5xx; na síncrona aparece como latência ou timeout do k6 (30 s). Essa diferença precisa ser considerada ao comparar taxas de erro.
+O smoke reprova somente se 20% ou mais das requisições falharem (`http_req_failed{scenario:traffic}`), pois 50 VUs com share de celebridade já saturam as duas composições (503 por timeout do Neo4j; deadlock 1213 e timeout no MySQL). Ele valida a integridade do fluxo, a coleta no Prometheus e a geração de `contagens.json`, não desempenho. Latência alta e timeouts sob saturação são resultado do experimento, não falha do teste. Na composição assíncrona, uma consulta Neo4j acima de `NEO4J_TIMEOUT_MS` (10 s no benchmark) vira `503`, então a saturação aparece como 5xx; na síncrona aparece como latência ou timeout do k6 (30 s). Essa diferença precisa ser considerada ao comparar taxas de erro.
+
+## Aceitação × conclusão
+
+As duas composições confirmam coisas diferentes ao responder 2xx, e o resumo do k6 mede só a resposta. Por isso o script registra três quantidades distintas:
+
+| Quantidade | Origem | Síncrona (Laravel + MySQL) | Assíncrona (Hyperf + RabbitMQ + Neo4j) |
+| --- | --- | --- | --- |
+| **Aceitos** | respostas 2xx vistas pelo k6 (`summary.json`) | 201 = transação confirmada: post/share e fan-out no feed gravados antes da resposta | `POST /posts` 201 e share 202 = evento confirmado pelo broker; persistência e fan-out ainda não ocorreram |
+| **Persistidos ao fim da carga** | `COUNT` no banco quando o k6 termina | ≈ aceitos, mais requisições que o k6 abandonou por timeout e que o PHP-FPM ainda concluiu ⚠️ (inferred) | parte dos aceitos; o restante está nas filas ou na outbox (`Task.done=false`) |
+| **Persistidos após drenagem** | `COUNT` após filas e outbox vazias e contagens estáveis | igual ao anterior, salvo gravações tardias | aceitos menos duplicatas descartadas pelo consumer |
+
+Consequências para a análise:
+
+- Taxa de erro HTTP baixa no assíncrono não significa trabalho concluído. Uma comparação justa usa a latência de **aceitação** (k6) junto com o **tempo de drenagem** (`drenagem.segundos`), que mede quanto o sistema leva para tornar visível o que já aceitou.
+- No síncrono, `http_timeouts` não equivale a perda de escrita: a requisição pode ter sido gravada depois que o k6 desistiu. A diferença entre persistidos e aceitos quantifica esse efeito.
+- No assíncrono, shares duplicados ainda na fila recebem 202 e são descartados pelo consumer (`SHARED.key` é único), então persistidos podem ficar abaixo de aceitos sem que haja falha. O worker grava cada descarte como `(:ShareDuplicate {id})` (id da mensagem) na mesma transação do lote; o MERGE por id mantém a contagem exata mesmo quando o cliente Neo4j desiste por timeout, o commit ocorre no servidor e o lote é reenviado e registra `shares: lote=… deduplicados=…` no log; `/metricas` expõe o total como `compartilhamentos_deduplicados`. Após drenagem completa espera-se `aceitos.shares − persistidos_final.shares_deduplicados = persistidos_final.shares`.
+- Divergência de contrato: no Hyperf, `POST /posts` responde 201, embora só confirme a publicação no broker, como o share (202). A semântica efetiva é de aceitação.
+
+### `contagens.json`
+
+Gravado por `scripts/viral.sh load` em cada execução. As contagens vêm do banco (`COUNT(*)` no MySQL via `docker compose exec`; consulta Cypher pela API HTTP do Neo4j via `wget` dentro do container), e não de `/metricas`, que pode não responder com a API ainda saturada. A contagem inicial é feita após o aquecimento (só leitura), imediatamente antes da carga.
+
+| Campo | Conteúdo |
+| --- | --- |
+| `aceitos.posts` | sucessos de `posts_create` + `celebrity_post` |
+| `aceitos.shares` | sucessos de `share` + `celebrity_share` menos `share_duplicates` (422) |
+| `inicio`, `fim_carga`, `final` | `posts`, `shares`, `feed_items`, `tarefas_pendentes` (outbox; sempre 0 no síncrono) e `shares_deduplicados` (ver abaixo) |
+| `persistidos_fim_carga`, `persistidos_final` | diferença em relação a `inicio` |
+| `drenagem` | `completa`, `segundos` (do fim da carga à primeira leitura estável), `timeout_s`, `intervalo_s`, `filas_restantes` |
+
+A drenagem termina quando as filas do RabbitMQ (prontas + sem ack) e a outbox estão vazias e duas leituras seguidas coincidem, ou ao atingir `DRAIN_TIMEOUT_S` (padrão 900 s, também em `make`). `DRAIN_POLL_S` (padrão 5 s) define o intervalo e a resolução do tempo medido. Com `completa=false`, `final` traz a última leitura e `segundos` fica nulo.
 
 ## Limitações conhecidas
 
 - Execute uma arquitetura por vez: as duas compartilham a CPU do host.
-- O 202 do Hyperf não garante persistência; a fila e `/metricas` ao final indicam o que foi efetivamente gravado.
+- O 2xx do Hyperf não garante persistência; `contagens.json` (após drenagem) indica o que foi efetivamente gravado.
+- As leituras de drenagem rodam enquanto os workers ainda processam e disputam o mesmo host; o custo é pequeno (uma consulta de contagem por intervalo), mas não é nulo.
 - A validação do compartilhamento assíncrono usa o estado já persistido: duplicatas ainda na fila podem receber 202, e o consumer descarta a repetição.
 - O cAdvisor precisa da v0.55+ com o image store do containerd no Docker; a v0.52 não identificava os containers.

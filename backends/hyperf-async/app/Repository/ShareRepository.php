@@ -39,8 +39,14 @@ class ShareRepository
      * roda quando o SHARED pertence a esta mensagem (sh.id = s.id). Destinatário que já tinha o
      * post mantém a primeira entrega; seq pode ganhar lacunas.
      *
+     * Auditoria: cada mensagem cujo SHARED já existia (aceita com 202, absorvida pelo MERGE) vira um
+     * (:ShareDuplicate {id}) na mesma transação. MERGE por id da mensagem mantém a contagem exata
+     * mesmo quando o cliente desiste por timeout, o commit ocorre no servidor e o lote é reenviado
+     * (um contador incrementado contaria duas vezes). `ausentes`: usuário, post ou origem inexistente (não deveria
+     * ocorrer, pois a API valida antes de publicar; contado à parte para não inflar a deduplicação).
+     *
      * @param list<array{id:string, usuario_id:string, post_id:string, origem_usuario_id:string, criado_em:string}> $shares
-     * @return list<array{id:string, entregas:int}>
+     * @return array{duplicados:int, ausentes:int, entregas:int}
      */
     public function persistBatch(array $shares): array
     {
@@ -51,20 +57,29 @@ class ShareRepository
             MERGE (u)-[sh:SHARED {key: s.usuario_id + ":" + s.post_id}]->(p)
             ON CREATE SET sh.id=s.id, sh.usuario_id=s.usuario_id, sh.post_id=s.post_id,
                 sh.origem_usuario_id=s.origem_usuario_id, sh.criado_em=s.criado_em
-            WITH s, u, p, o, sh WHERE sh.id = s.id
-            MERGE (u)-[r:RESHARED_FROM {key: s.usuario_id + ":" + s.post_id}]->(o)
-            ON CREATE SET r.post_id=s.post_id, r.share_id=s.id, r.criado_em=s.criado_em
-            WITH s, u, p
-            CALL (s, u, p) {
-                MATCH (f:User)-[:FOLLOWS]->(u)
-                WHERE f.id <> p.usuario_id
-                SET f.feed_seq = coalesce(f.feed_seq, 0) + 1
-                MERGE (f)-[e:FEED {key: f.id + ":" + p.id}]->(p)
-                ON CREATE SET e.seq=f.feed_seq, e.origem="share",
-                    e.autor_evento_id=s.usuario_id, e.evento_id=s.id
-                RETURN count(f) AS entregas
+            WITH collect(CASE WHEN sh.id = s.id THEN {s: s, u: u, p: p, o: o} END) AS novos,
+                collect(CASE WHEN sh.id <> s.id THEN s END) AS repetidos, count(*) AS encontrados
+            FOREACH (d IN repetidos | MERGE (x:ShareDuplicate {id: d.id})
+                ON CREATE SET x.key = d.usuario_id + ":" + d.post_id, x.criado_em = d.criado_em)
+            WITH novos, size(repetidos) AS duplicados, size($shares) - encontrados AS ausentes
+            CALL (novos) {
+                UNWIND novos AS n
+                WITH n.s AS s, n.u AS u, n.p AS p, n.o AS o
+                MERGE (u)-[r:RESHARED_FROM {key: s.usuario_id + ":" + s.post_id}]->(o)
+                ON CREATE SET r.post_id=s.post_id, r.share_id=s.id, r.criado_em=s.criado_em
+                WITH s, u, p
+                CALL (s, u, p) {
+                    MATCH (f:User)-[:FOLLOWS]->(u)
+                    WHERE f.id <> p.usuario_id
+                    SET f.feed_seq = coalesce(f.feed_seq, 0) + 1
+                    MERGE (f)-[e:FEED {key: f.id + ":" + p.id}]->(p)
+                    ON CREATE SET e.seq=f.feed_seq, e.origem="share",
+                        e.autor_evento_id=s.usuario_id, e.evento_id=s.id
+                    RETURN count(f) AS entregas
+                }
+                RETURN sum(entregas) AS entregas
             }
-            RETURN s.id AS id, entregas', ['shares' => array_values($shares)]);
+            RETURN duplicados, ausentes, entregas', ['shares' => array_values($shares)])[0];
     }
 
     /**

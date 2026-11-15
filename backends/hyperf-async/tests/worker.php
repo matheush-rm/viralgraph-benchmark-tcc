@@ -85,7 +85,7 @@ final class FlakyShares extends ShareRepository {
     public function persistBatch(array $shares): array {
         $this->calls[] = array_column($shares, 'id');
         if (in_array('bad', array_column($shares, 'id'), true)) { throw new RuntimeException('timeout'); }
-        return [];
+        return ['duplicados' => 0, 'ausentes' => 0, 'entregas' => 0];
     }
 }
 $shareMessage = fn (string $id) => new class(json_encode(['id' => $id])) extends AMQPMessage {

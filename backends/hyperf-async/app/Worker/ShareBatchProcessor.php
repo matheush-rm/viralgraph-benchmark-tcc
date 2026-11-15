@@ -33,7 +33,7 @@ final class ShareBatchProcessor
             return [];
         }
         try {
-            $this->shares->persistBatch($payloads);
+            $result = $this->shares->persistBatch($payloads);
         } catch (\RuntimeException $error) {
             if (count($messages) === 1) {
                 fwrite(STDERR, 'shares: '.$error->getMessage().PHP_EOL);
@@ -44,6 +44,11 @@ final class ShareBatchProcessor
         }
         foreach ($messages as $message) {
             $message->ack();
+        }
+        // Já gravados como (:ShareDuplicate) no mesmo commit; o log é só por lote (lote reenviado repete a linha).
+        if ($result['duplicados'] > 0 || $result['ausentes'] > 0) {
+            fwrite(STDERR, sprintf('shares: lote=%d deduplicados=%d ausentes=%d'.PHP_EOL,
+                count($messages), $result['duplicados'], $result['ausentes']));
         }
         return [];
     }

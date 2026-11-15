@@ -7,7 +7,14 @@
 #   scripts/viral.sh down     sync|async     derruba o ambiente (remove volumes do projeto)
 #   scripts/viral.sh obs up|down             Prometheus + Grafana + cAdvisor
 #   scripts/viral.sh warmup   sync|async     aquecimento só de leitura (GET), fora da medição
-#   MODE=smoke|tcc scripts/viral.sh load sync|async   (roda warmup antes; WARMUP=0 desliga)
+#   MODE=smoke|tcc SCENARIO=baseline|fanout|graph_read|mixed scripts/viral.sh load sync|async
+#                                            (roda warmup antes; WARMUP=0 desliga)
+#   SCENARIO=... scripts/viral.sh tcc sync|async   restore + load MODE=tcc (snapshot limpo)
+#   scripts/viral.sh counts   sync|async     contagens direto no banco (posts, shares, feed, outbox)
+#
+# VUS_MAX define o degrau de carga do MODE=tcc (padrão 600). Ao fim da carga, o script conta direto
+# no banco, espera a drenagem (filas/outbox vazias e contagens estáveis, até DRAIN_TIMEOUT_S) e grava
+# contagens.json: aceitos (respostas do k6) x persistidos ao fim da carga x persistidos após drenagem.
 #
 # Opera somente nos projetos Compose tcc-viral-sync e tcc-viral-async.
 set -euo pipefail
@@ -139,14 +146,92 @@ cmd_warmup() {
       --summary-export "$out/summary.json" "$ROOT/code/k6/viral.js" 2>&1 | tee "$out/output.log"
 }
 
+# Contagens lidas direto no banco, sem passar pela API (que pode seguir saturada ao fim da carga).
+# tarefas_pendentes: outbox de distribuição do Hyperf ainda não concluída (sempre 0 no síncrono).
+# shares_deduplicados: shares aceitos (202) que o MERGE do worker absorveu por já existirem (sempre 0
+# no síncrono, que rejeita com 422 dentro da transação).
+db_counts() {
+  local arch="$1"
+  if [ "$arch" = sync ]; then
+    compose sync exec -T mysql mysql -N -B -ubenchmark -pbenchmark-local laravel_sync_benchmark -e \
+      "SELECT (SELECT COUNT(*) FROM posts), (SELECT COUNT(*) FROM shares), (SELECT COUNT(*) FROM feed_items)" \
+      2>/dev/null | awk '{printf "{\"posts\":%d,\"shares\":%d,\"feed_items\":%d,\"tarefas_pendentes\":0,\"shares_deduplicados\":0}\n", $1, $2, $3}'
+  else
+    local body='{"statements":[{"statement":"CALL { MATCH (p:Post) RETURN count(p) AS posts } CALL { MATCH ()-[s:SHARED]->() RETURN count(s) AS shares } CALL { MATCH ()-[e:FEED]->() RETURN count(e) AS feed } CALL { MATCH (t:Task) WHERE t.done = false RETURN count(t) AS pendentes } CALL { MATCH (d:ShareDuplicate) RETURN count(d) AS dedup } RETURN posts, shares, feed, pendentes, dedup"}]}'
+    compose async exec -T neo4j wget -q -O - --auth-no-challenge --user=neo4j \
+      --password="${NEO4J_PASSWORD:-benchmark-local}" --header='Content-Type: application/json' \
+      --post-data="$body" http://127.0.0.1:7474/db/neo4j/tx/commit \
+      | jq -ce 'if (.errors | length) > 0 then error(.errors[0].message) else .results[0].data[0].row
+          | {posts: .[0], shares: .[1], feed_items: .[2], tarefas_pendentes: .[3], shares_deduplicados: .[4]} end'
+  fi
+}
+
+# Mensagens nas filas do RabbitMQ (prontas + sem ack); -1 se o endpoint não responder.
+queue_depth() {
+  local body
+  body="$(curl -fsS --max-time 5 "http://127.0.0.1:${RABBITMQ_METRICS_PORT:-15692}/metrics/per-object" 2>/dev/null)" \
+    || { echo -1; return; }
+  awk '/^rabbitmq_queue_messages\{/ { s += $NF } END { print s + 0 }' <<<"$body"
+}
+
+# Espera a conclusão do trabalho aceito: filas e outbox vazias (async) e contagens iguais em duas
+# leituras seguidas (as duas arquiteturas; no síncrono, requisições abandonadas pelo k6 por timeout
+# ainda podem estar gravando). Imprime JSON com as contagens finais e o tempo de drenagem, medido do
+# fim da carga até a primeira leitura do par estável (resolução = DRAIN_POLL_S).
+wait_drain() {
+  local arch="$1" timeout="${DRAIN_TIMEOUT_S:-900}" interval="${DRAIN_POLL_S:-5}"
+  local t0 now cur prev="" prev_at=0 depth pending complete=false
+  t0=$(date +%s)
+  while :; do
+    now=$(( $(date +%s) - t0 ))
+    cur="$(db_counts "$arch")" || cur=""
+    depth=0; [ "$arch" = async ] && depth="$(queue_depth)"
+    pending="$(jq -r '.tarefas_pendentes' <<<"$cur" 2>/dev/null)" || pending=-1
+    log "drenagem ${now}s: filas=$depth $cur"
+    if [ -n "$cur" ] && [ "$cur" = "$prev" ] && [ "$depth" = 0 ] && [ "$pending" = 0 ]; then
+      complete=true; break
+    fi
+    [ "$now" -ge "$timeout" ] && break
+    [ "$cur" = "$prev" ] || prev_at=$now
+    prev="$cur"
+    sleep "$interval"
+  done
+  jq -cn --argjson final "${cur:-null}" --argjson complete "$complete" --argjson s "$prev_at" \
+    --argjson timeout "$timeout" --argjson interval "$interval" --argjson depth "$depth" \
+    '{final: $final, drenagem: {completa: $complete, segundos: (if $complete then $s else null end),
+      timeout_s: $timeout, intervalo_s: $interval, filas_restantes: $depth}}'
+}
+
+# contagens.json: aceitos (2xx vistos pelo k6) x persistidos (delta no banco) ao fim da carga e após
+# a drenagem. Shares aceitos descontam os 422 (share_duplicates).
+write_counts() {
+  local out="$1" arch="$2" scenario="$3" start="$4" end="$5" drain="$6"
+  jq -n --arg arch "$arch" --arg scenario "$scenario" --arg mode "${MODE:-smoke}" \
+    --argjson vus "${VUS_MAX:-600}" --argjson inicio "$start" --argjson fim "$end" --argjson drain "$drain" \
+    --slurpfile summary "$out/summary.json" '
+    def passes(re): [$summary[0].root_group.checks | to_entries[] | select(.key | test(re)) | .value.passes] | add // 0;
+    def delta(a; b): {posts: (b.posts - a.posts), shares: (b.shares - a.shares), feed_items: (b.feed_items - a.feed_items),
+      shares_deduplicados: ((b.shares_deduplicados // 0) - (a.shares_deduplicados // 0))};
+    {arquitetura: $arch, cenario: $scenario, modo: $mode, vus_max: (if $mode == "tcc" then $vus else null end),
+     aceitos: {posts: passes("^(posts_create|celebrity_post) "),
+               shares: (passes("^(share|celebrity_share) ") - ($summary[0].metrics.share_duplicates.count // 0))},
+     inicio: $inicio, fim_carga: $fim, final: $drain.final,
+     persistidos_fim_carga: (if $fim then delta($inicio; $fim) else null end),
+     persistidos_final: (if $drain.final then delta($inicio; $drain.final) else null end),
+     drenagem: $drain.drenagem}' > "$out/contagens.json"
+}
+
+cmd_counts() { db_counts "$1"; }
+
 cmd_load() {
-  local arch="$1" port metrics_url out
+  local arch="$1" scenario="${SCENARIO:-mixed}" port metrics_url out level="" start end drain
   require_dataset
   [ "${WARMUP:-1}" = 0 ] || cmd_warmup "$arch"
   port="$(port_of "$arch")"
   metrics_url=""
   [ "$arch" = async ] && metrics_url="http://127.0.0.1:${RABBITMQ_METRICS_PORT:-15692}/metrics/per-object"
-  out="$ROOT/code/k6/results/viral-$arch-${MODE:-smoke}-$(date -u +%Y%m%dT%H%M%SZ)"
+  [ "${MODE:-smoke}" = tcc ] && level="-vus${VUS_MAX:-600}"
+  out="$ROOT/code/k6/results/viral-$arch-${MODE:-smoke}-$scenario$level-$(date -u +%Y%m%dT%H%M%SZ)"
   mkdir -p "$out"
   local outputs=()
   if curl -fsS -o /dev/null "http://127.0.0.1:9090/-/ready" 2>/dev/null; then
@@ -154,13 +239,22 @@ cmd_load() {
     export K6_PROMETHEUS_RW_SERVER_URL="http://127.0.0.1:9090/api/v1/write"
     export K6_PROMETHEUS_RW_TREND_STATS="p(50),p(95),p(99),avg,max"
   fi
-  log "k6 $arch MODE=${MODE:-smoke} -> $out"
-  MODE="${MODE:-smoke}" ARCH="$arch" BASE_URL="http://127.0.0.1:$port" \
-    DATASET="$DATASET/k6/dataset.json" RABBITMQ_METRICS_URL="$metrics_url" \
-    k6 run "${outputs[@]}" --tag "arch=$arch" --tag "mode=${MODE:-smoke}" \
-      --summary-export "$out/summary.json" "$ROOT/code/k6/viral.js" 2>&1 | tee "$out/output.log"
-  curl -fsS "http://127.0.0.1:$port/metricas" > "$out/metricas.json" || true
-  log "métricas finais: $(cat "$out/metricas.json" 2>/dev/null)"
+  start="$(db_counts "$arch")" || die "$arch: contagem inicial no banco falhou"
+  log "k6 $arch MODE=${MODE:-smoke} SCENARIO=$scenario VUS_MAX=${VUS_MAX:-600} -> $out"
+  log "contagens iniciais: $start"
+  # Thresholds reprovados (ex.: falhas >= 20% no smoke) não podem pular as contagens: guarda o código do k6.
+  local rc=0
+  MODE="${MODE:-smoke}" SCENARIO="$scenario" ARCH="$arch" BASE_URL="http://127.0.0.1:$port" \
+    DATASET="$DATASET/k6/dataset.json" RABBITMQ_METRICS_URL="$metrics_url" VUS_MAX="${VUS_MAX:-600}" \
+    k6 run "${outputs[@]}" --tag "arch=$arch" --tag "mode=${MODE:-smoke}" --tag "experiment=$scenario" \
+      --tag "vus_max=${VUS_MAX:-600}" \
+      --summary-export "$out/summary.json" "$ROOT/code/k6/viral.js" 2>&1 | tee "$out/output.log" || rc=$?
+  end="$(db_counts "$arch")" || end='null'
+  log "contagens ao fim da carga: $end"
+  drain="$(wait_drain "$arch")"
+  write_counts "$out" "$arch" "$scenario" "$start" "$end" "$drain"
+  log "contagens: $(jq -c '{aceitos, persistidos_fim_carga, persistidos_final, drenagem}' "$out/contagens.json")"
+  return "$rc"
 }
 
 case "${1:-}" in
@@ -171,5 +265,7 @@ case "${1:-}" in
   down) cmd_down "${2:?sync|async}" ;;
   obs) cmd_obs "${2:-up}" ;;
   load) cmd_load "${2:?sync|async}" ;;
-  *) sed -n '2,13p' "$0"; exit 1 ;;
+  counts) cmd_counts "${2:?sync|async}" ;;
+  tcc) cmd_restore "${2:?sync|async}"; MODE=tcc cmd_load "$2" ;;
+  *) sed -n '2,20p' "$0"; exit 1 ;;
 esac
