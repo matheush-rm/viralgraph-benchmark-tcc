@@ -18,7 +18,7 @@ A relevância do estudo está em aproximar propriedades estruturais da rede das 
 
 O objetivo geral é analisar comparativamente o comportamento de duas composições arquiteturais completas durante a simulação de cascatas de informação associadas à viralização. Para alcançá-lo, são definidos os seguintes objetivos específicos: i) modelar redes e cascatas com diferentes distribuições de conectividade; ii) implementar geradores de carga capazes de reproduzir picos controlados; iii) submeter as duas arquiteturas ao mesmo estímulo; iv) coletar métricas de recursos, latência, vazão, erros, filas e rastreamento distribuído; e v) comparar saturação, degradação e recuperação após o pico.
 
-O restante deste artigo está organizado da seguinte forma: o referencial teórico define os conceitos de redes, cascatas, arquiteturas e observabilidade; a seção de trabalhos relacionados examina estudos próximos à comparação proposta; a metodologia descreve a classificação da pesquisa e o desenho experimental; os resultados apresentam os dados obtidos; e as considerações finais sintetizam as conclusões.
+O restante deste artigo está organizado da seguinte forma: o referencial teórico define os conceitos de redes, cascatas, arquiteturas e observabilidade; a seção de trabalhos relacionados examina estudos próximos à comparação proposta; a metodologia descreve a classificação da pesquisa e o desenho experimental; o desenvolvimento detalha a construção das composições e do gerador de carga; os resultados apresentam e analisam os dados de cada cenário; e as considerações finais sintetizam as conclusões.
 
 \estrutura\section{\esp Referencial Teórico}
 
@@ -147,6 +147,119 @@ A Figura \ref{fig:arquiteturas-comparadas} apresenta as duas composições arqui
 \end{figure}
 
 Os experimentos serão organizados em cenários que variam a concentração de grau de saída dos iniciadores, o tamanho das cascatas e a intensidade do pico. Cada cenário será repetido múltiplas vezes para permitir análise estatística.
+
+\estrutura\section{\esp Desenvolvimento}
+
+Como o sistema é exclusivamente \textit{backend}, não há telas: a interface é um contrato HTTP comum às duas composições, com quatro operações (publicar um post com distribuição ao feed dos seguidores, compartilhar um post, consultar o feed de um usuário e consultar a árvore de propagação de um post). Como requisitos não funcionais, ambas devem expor as mesmas rotas e validações, operar com o mesmo orçamento de recursos e partir do mesmo estado persistido em cada execução.
+
+\estrutura\subsection{\esp Modelo de dados e corpus}
+
+O domínio possui usuários, relações de seguir, posts, compartilhamentos e entradas de feed. No MySQL, esses conceitos são tabelas, e a árvore de propagação é obtida por consulta recursiva; no Neo4j, os vínculos são relações do grafo, como \texttt{(:User)-[:FOLLOWS]->(:User)} e \texttt{(:User)-[:FEED]->(:Post)}, e a árvore é percorrida a partir do nó do post. Nas duas composições o feed é materializado: cada publicação ou compartilhamento grava uma entrada por destinatário, de modo que o custo de escrita cresce com o grau de saída de quem publica.
+
+O corpus é gerado por um programa determinístico (semente 42) e contém 10.020 usuários, 126.323 relações de seguir, 15.003 posts, 34.297 compartilhamentos e 532.820 entradas de feed. Os 10.000 usuários comuns têm número de seguidores sorteado de uma distribuição de Zipf truncada entre 1 e 30, enquanto 20 celebridades possuem entre 2.150 e 5.000 seguidores cada. Essa assimetria torna o grau de saída uma variável controlada: uma ação de celebridade produz milhares de entradas de feed, e a de um usuário comum, poucas dezenas. Os 150 posts virais possuem cascatas pré-geradas de até seis níveis. O estado de cada banco é salvo e restaurado antes de cada execução.
+
+\estrutura\subsection{\esp Implementação das composições}
+
+A composição síncrona utiliza Laravel 12 sobre PHP 8.4-FPM e MySQL 8.0. Publicação e compartilhamento gravam o registro e as entradas de feed dos seguidores na mesma transação, e a resposta (HTTP 201) só é devolvida após a confirmação. A composição orientada a eventos utiliza Hyperf 3.2 sobre Swoole, RabbitMQ 4.1 e Neo4j 5.26: a API publica a mensagem e responde assim que o \textit{broker} a confirma (HTTP 202 nos compartilhamentos), e um \textit{worker} consome as filas, agrupa até 50 mensagens por lote e grava cada lote em uma única transação. Ambas possuem duas instâncias da API atrás de um Nginx. O Quadro \ref{qua:recursos} resume o orçamento de recursos, idêntico no total.
+
+\begin{quadro}[H]
+    \centering
+    \caption{Orçamento de recursos por contêiner (CPU / memória)}
+    \label{qua:recursos}
+    \begin{tabular}{|C{3.6cm}|C{4.6cm}|C{4.6cm}|}
+    \hline
+    \textbf{Componente} & \textbf{Síncrona} & \textbf{Orientada a eventos} \\ \hline
+    Nginx + 2 APIs & 0,50 / 704 MiB & 0,50 / 704 MiB \\ \hline
+    \textit{Worker} + RabbitMQ & -- & 0,50 / 896 MiB \\ \hline
+    Banco de dados & MySQL: 1,00 / 2.296 MiB & Neo4j: 0,50 / 1.400 MiB \\ \hline
+    \textbf{Total} & \textbf{1,50 / 3.000 MiB} & \textbf{1,50 / 3.000 MiB} \\ \hline
+    \end{tabular}
+    \vspace{.1cm}
+    \small
+    {\footnotesize\\ \textbf{Fonte: Elaborado pelo autor}}
+\end{quadro}
+
+\estrutura\subsection{\esp Geração de carga e procedimento experimental}
+
+A carga é produzida pelo k6 2.3.0 em modelo fechado: cada usuário virtual (VU) envia uma requisição, aguarda a resposta e espera entre 50 e 250 ms antes da próxima. Cada execução dura três minutos (subida em duas etapas de 30 s, patamar de 90 s e descida de 30 s). A cada iteração, o VU sorteia uma ação segundo a mistura do cenário (Quadro \ref{qua:cenarios}), e cada escrita é, com igual probabilidade, publicação ou compartilhamento; os posts virais lidos ou compartilhados seguem distribuição de Zipf ($s = 1{,}1$) sobre o ranking de cascatas.
+
+\begin{quadro}[H]
+    \centering
+    \caption{Cenários de carga e respectivas misturas de ações}
+    \label{qua:cenarios}
+    \begin{tabular}{|C{2.4cm}|C{12.6cm}|}
+    \hline
+    \textbf{Cenário} & \textbf{Mistura por iteração} \\ \hline
+    \texttt{baseline} & 80\% leitura de feed; 20\% escrita de usuários comuns. \\ \hline
+    \texttt{fanout} & 80\% ações de celebridades; 20\% leitura de feed. \\ \hline
+    \texttt{graph\_read} & 90\% leitura da árvore de propagação de post viral; 10\% leitura de feed. \\ \hline
+    \texttt{mixed} & 70\% leitura de feed ou árvore; 25\% escrita de comuns; 5\% celebridades. \\ \hline
+    \end{tabular}
+    \vspace{.1cm}
+    \small
+    {\footnotesize\\ \textbf{Fonte: Elaborado pelo autor}}
+\end{quadro}
+
+Cada execução restaura o volume do banco, aquece a aplicação somente com leituras, aplica a carga e aguarda a drenagem (filas e \textit{outbox} vazias e contagens estáveis, até 900 s). Como o código 2xx da composição orientada a eventos indica apenas aceitação, os registros persistidos são contados diretamente no banco ao fim da carga e após a drenagem. As composições são executadas uma por vez na mesma máquina (Intel Core i5-1135G7, 8 \textit{threads}, 30 GiB de memória). O Prometheus coleta as séries do k6, a profundidade das filas e o consumo dos contêineres via cAdvisor.
+
+Foram definidos dois degraus de carga: estresse viral (600 VUs), que busca a saturação, e moderado, calibrado por uma rampa exploratória na composição síncrona, no cenário \texttt{mixed}, com 10, 15, 20, 25, 50 e 100 VUs. O critério foi o maior número de VUs sem falhas nas rotas de usuários comuns, o que resultou em 20 VUs. As ações de celebridades ficaram fora do critério porque parte delas excedeu o tempo limite do k6 (30 s) em todos os degraus da rampa, inclusive no menor.
+
+\estrutura\section{\esp Resultados}
+
+Os resultados são preliminares. Até esta versão, apenas o cenário \texttt{mixed} foi executado (degrau moderado nas duas composições e estresse na orientada a eventos), uma vez por combinação; por isso, os valores medidos aparecem como marcadores destacados (\resultado{valor}), a serem substituídos pelos resultados finais. A Tabela \ref{tab:resultados} consolida, para cada cenário e degrau, a vazão, o p95 de todas as rotas, a taxa de falhas (respostas 5xx ou tempo limite do k6), o maior \textit{backlog} e o tempo de drenagem. A composição síncrona não possui filas (n.a.).
+
+\begin{table}[H]
+	\centering
+	\caption{Resultados por cenário, composição e degrau de carga}
+	\vspace{-0.3cm}
+	\label{tab:resultados}
+	\small
+	\begin{tabular}{l|c|c|c|c|c|c|c|c}
+	\hline
+	 & & \multicolumn{3}{c|}{\textbf{Moderado (20 VUs)}} & \multicolumn{4}{c}{\textbf{Estresse (600 VUs)}} \\
+	\textbf{Cenário} & \textbf{Arq.} & \textbf{req/s} & \textbf{p95 (ms)} & \textbf{Falhas} & \textbf{req/s} & \textbf{p95 (ms)} & \textbf{Falhas} & \textbf{Drenagem (s)} \\
+	\hline
+	\texttt{baseline}    & Sínc. & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & n.a. \\
+	                     & Ev.   & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} \\
+	\texttt{fanout}      & Sínc. & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & n.a. \\
+	                     & Ev.   & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} \\
+	\texttt{graph\_read} & Sínc. & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & n.a. \\
+	                     & Ev.   & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} \\
+	\texttt{mixed}       & Sínc. & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & n.a. \\
+	                     & Ev.   & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} \\
+	\hline
+	\end{tabular}
+	\vspace{.1cm}
+	{\footnotesize\\ \textbf{Fonte: Elaborada pelo autor}}
+\end{table}
+
+\estrutura\subsection{\esp Cenário \texttt{baseline}}
+
+O cenário \texttt{baseline} representa o tráfego cotidiano, sem celebridades, e serve de referência para separar o custo próprio de cada composição do custo do \textit{fan-out} de alto grau. No degrau moderado, o p95 da leitura de feed foi de \resultado{sínc.} na composição síncrona e de \resultado{ev.} na orientada a eventos; o das escritas, de \resultado{sínc.} e \resultado{ev.}. No estresse, \resultado{degradação observada}.
+
+\estrutura\subsection{\esp Cenário \texttt{fanout}}
+
+O cenário \texttt{fanout} concentra a carga nos nós de maior grau de saída: cada ação gera entre 2.000 e 5.000 entradas de feed, custo que integra o tempo de resposta na composição síncrona e é transferido às filas na orientada a eventos. No degrau moderado, as ações de celebridades falharam em \resultado{sínc.} e \resultado{ev.} dos casos, e o \textit{backlog} máximo atingiu \resultado{n} mensagens. No estresse, \resultado{degradação observada}. Repetições do par celebridade e post retornam 422 (\resultado{duplicatas}).
+
+\estrutura\subsection{\esp Cenário \texttt{graph\_read}}
+
+O cenário \texttt{graph\_read} isola a consulta da árvore de propagação, operação em que os modelos de dados mais se diferenciam: consulta recursiva sobre tabelas no MySQL e travessia de relações no Neo4j. Com poucas escritas, a comparação recai sobre a latência de leitura: o p95 da árvore foi de \resultado{sínc.} e \resultado{ev.} no degrau moderado e de \resultado{sínc.} e \resultado{ev.} no estresse. \resultado{análise da diferença}. Qualquer explicação deve considerar que o MySQL dispõe do dobro da CPU do Neo4j (Quadro \ref{qua:recursos}).
+
+\estrutura\subsection{\esp Cenário \texttt{mixed}}
+
+O cenário \texttt{mixed} aproxima-se de um pico de viralização em que o tráfego cotidiano disputa recursos com o \textit{fan-out}. No degrau moderado, a vazão foi de \resultado{sínc.} e \resultado{ev.} req/s, com p95 de leitura de \resultado{sínc.} e \resultado{ev.}, e as ações de celebridades falharam em \resultado{sínc.} dos casos na composição síncrona. Ao fim da carga, a composição orientada a eventos havia persistido \resultado{\%} dos compartilhamentos aceitos, e a drenagem durou \resultado{s}. No estresse, \resultado{degradação observada}.
+
+\estrutura\subsection{\esp Síntese comparativa}
+
+\resultado{síntese: onde cada composição degrada, em qual métrica e a partir de qual degrau}. As taxas de falha não são diretamente comparáveis: na composição síncrona, a saturação aparece como latência crescente e tempo limite do k6 (30 s); na orientada a eventos, consultas ao Neo4j acima de 10 s retornam 503. Do mesmo modo, a latência de aceitação da composição orientada a eventos só é interpretável junto com o tempo de drenagem e com a diferença entre aceitos e persistidos (\resultado{n}). O consumo de recursos coletado pelo cAdvisor indicou \resultado{gargalo por composição}.
+
+\estrutura\section{\esp Considerações Finais}
+
+Este trabalho comparou uma composição síncrona e outra orientada a eventos sob cascatas de informação associadas à viralização. Os objetivos de modelar redes com conectividade desigual e de implementar um gerador de picos controlados foram atendidos. A submissão ao mesmo estímulo foi realizada, até esta versão, apenas no cenário \texttt{mixed}, e a coleta ainda não inclui o rastreamento distribuído.
+
+\resultado{conclusão principal: qual composição sustentou cada cenário, em qual métrica e a que custo}. \resultado{resposta ao problema: relação entre grau de saída dos iniciadores e degradação}. \resultado{evidência sobre o efeito do grau de saída do iniciador na degradação de cada composição}.
+
+Os resultados têm limitações: execuções em uma única máquina, com 1,5 CPU por composição e uma execução por combinação; corpus sintético de porte reduzido; distribuição de CPU entre os bancos diferente, embora com o mesmo total; e semânticas de sucesso distintas, que impedem comparar apenas a latência HTTP. Como trabalhos futuros, propõem-se repetir as execuções para permitir testes estatísticos, instrumentar o rastreamento distribuído, empregar carga aberta, com taxa de chegada controlada, ampliar o corpus e avaliar composições intermediárias, como a síncrona com fila.
 
 \iffalse
 
