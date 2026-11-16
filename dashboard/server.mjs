@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// Painel local de experimentos de viralização.
-// Serve a SPA (dashboard/public), lê code/k6/results/viral-* e dispara Makefile/scripts/viral.sh
-// com logs via Server-Sent Events. Não altera backends/, scripts/ nem code/k6/.
+// Painel local de experimentos de viralização e do baseline de leitura de perfil.
+// Serve a SPA (dashboard/public), lê code/k6/results/viral-* e baseline-* e dispara
+// Makefile/scripts/viral.sh com logs via Server-Sent Events.
+// Não altera backends/, scripts/ nem code/k6/.
 //
 //   node dashboard/server.mjs            (PORT=8765, HOST=127.0.0.1)
 
@@ -23,12 +24,18 @@ const HOST = process.env.HOST || '127.0.0.1';
 
 const ARCHS = ['sync', 'async'];
 const MODES = ['smoke', 'tcc'];
-const SCENARIOS = ['mixed', 'baseline', 'fanout', 'graph_read'];
-const ROUTES = ['feed', 'propagation_tree', 'posts_create', 'share', 'celebrity_post', 'celebrity_share'];
+// kind: viral (escrita em cascata) | user_lookup (leitura de perfil, baseline de controle).
+const KINDS = ['viral', 'user_lookup'];
+const SCENARIOS = ['mixed', 'baseline', 'fanout', 'graph_read', 'organic', 'viral_peak'];
+// organic e viral_peak têm pico de VUs fixo pelo cenário (50/300) e targets próprios no Makefile,
+// que já encadeiam restore: VUS_MAX e o checkbox de restore não se aplicam a eles.
+const FIXED_PROFILE = ['organic', 'viral_peak'];
+const ROUTES = ['feed', 'propagation_tree', 'posts_create', 'share', 'celebrity_post', 'celebrity_share', 'user_lookup'];
 
 // ---------------------------------------------------------------- leitura dos resultados
 
-const DIR_RE = /^viral-(sync|async)-(smoke|tcc)(?:-(baseline|fanout|graph_read|mixed))?(?:-vus(\d+))?-(\d{8}T\d{6}Z)$/;
+const DIR_VIRAL = /^viral-(sync|async)-(smoke|tcc)(?:-(baseline|fanout|graph_read|mixed|organic|viral_peak))?(?:-vus(\d+))?-(\d{8}T\d{6}Z)$/;
+const DIR_BASELINE = /^baseline-(sync|async)-(smoke|tcc)-(\d{8}T\d{6}Z)$/;
 
 async function readJson(file) {
   try { return JSON.parse(await fs.readFile(file, 'utf8')); } catch { return null; }
@@ -68,6 +75,8 @@ function summarize(summary) {
     rps: traffic?.total && durationS ? traffic.total / durationS : reqs?.rate ?? null,
     fail_rate: traffic?.rate ?? null,
     failed: traffic?.failed ?? null,
+    // Só o baseline de leitura mede conformidade de formato (rate==0 é o contrato).
+    contract_errors: rate(M.contract_errors),
     latency: trend(M.http_req_duration),
     timeouts: M.http_timeouts?.count ?? 0,
     http_5xx: M.http_5xx?.count ?? 0,
@@ -83,21 +92,31 @@ async function listRuns() {
   try { names = await fs.readdir(RESULTS); } catch { return []; }
   const runs = [];
   for (const name of names) {
-    const m = DIR_RE.exec(name);
-    if (!m) continue;
+    const mv = DIR_VIRAL.exec(name);
+    const mb = mv ? null : DIR_BASELINE.exec(name);
+    if (!mv && !mb) continue;
+    // baseline (user_lookup): sem contagens de escrita; metricas-antes/depois provam leitura pura.
+    const kind = mb ? 'user_lookup' : 'viral';
     const dir = path.join(RESULTS, name);
-    const [summary, counts] = await Promise.all([readJson(path.join(dir, 'summary.json')), readJson(path.join(dir, 'contagens.json'))]);
-    if (!summary && !counts) continue;
-    const ts = m[5];
+    const [summary, counts, antes, depois] = await Promise.all([
+      readJson(path.join(dir, 'summary.json')),
+      readJson(path.join(dir, 'contagens.json')),
+      mb ? readJson(path.join(dir, 'metricas-antes.json')) : null,
+      mb ? readJson(path.join(dir, 'metricas.json')) : null,
+    ]);
+    if (!summary && !counts && !antes) continue;
+    const ts = mv ? mv[5] : mb[3];
     runs.push({
       id: name,
-      arch: m[1],
-      mode: m[2],
-      scenario: m[3] ?? counts?.cenario ?? null,
-      vus_max: m[4] ? Number(m[4]) : counts?.vus_max ?? null,
+      kind,
+      arch: mv ? mv[1] : mb[1],
+      mode: mv ? mv[2] : mb[2],
+      scenario: mv ? mv[3] ?? counts?.cenario ?? null : null,
+      vus_max: mv?.[4] ? Number(mv[4]) : counts?.vus_max ?? null,
       started_at: `${ts.slice(0, 4)}-${ts.slice(4, 6)}-${ts.slice(6, 8)}T${ts.slice(9, 11)}:${ts.slice(11, 13)}:${ts.slice(13, 15)}Z`,
       metrics: summary ? summarize(summary) : null,
       counts: counts ?? null,
+      state: antes && depois ? { antes, depois } : null,
     });
   }
   runs.sort((a, b) => b.started_at.localeCompare(a.started_at));
@@ -136,10 +155,13 @@ function detectPhase(line) {
     if (current.phase === 'queued') setPhase('restore');
   }
   if (/k6 \w+ MODE=warmup/.test(line)) setPhase('warmup');
-  const load = /\[viral\] k6 \w+ MODE=(smoke|tcc) SCENARIO=\S+ VUS_MAX=\d+ -> (\S+)/.exec(line);
+  const load = /\[viral\] k6 \w+ MODE=(smoke|tcc) SCENARIO=\S+ VUS_MAX=\d+ -> (\S+)/.exec(line)
+    ?? /\[viral\] k6 \w+ MODE=(smoke|tcc) baseline_user_lookup -> (\S+)/.exec(line);
   if (load) { setPhase('load'); current.resultDir = path.basename(load[2]); broadcast('meta', { resultDir: current.resultDir }); }
   if (/\[viral\] (contagens ao fim da carga|drenagem \d+s)/.test(line)) setPhase('drain');
   if (/\[viral\] contagens: \{/.test(line)) setPhase('done');
+  // k6 sinaliza thresholds reprovados com esta mensagem; distingue "muitas falhas" de erro real.
+  if (/thresholds on metrics .* have been crossed/.test(line)) current.thresholdsCrossed = true;
 }
 
 // eslint-disable-next-line no-control-regex
@@ -156,8 +178,19 @@ function pushLine(raw, stream) {
   broadcast('log', entry);
 }
 
-function buildSteps({ arch, mode, scenario, vus, restore }) {
-  const make = (target, vars) => ['make', [target, ...Object.entries(vars).map(([k, v]) => `${k}=${v}`)]];
+// Cada passo é [cmd, args, envExtra]. make cobre quase tudo; o baseline sem restore chama o
+// script direto porque não há target "baseline sem restore" no Makefile.
+function buildSteps({ kind, arch, mode, scenario, vus, restore }) {
+  const make = (target, vars = {}) => ['make', [target, ...Object.entries(vars).map(([k, v]) => `${k}=${v}`)], {}];
+  if (kind === 'user_lookup') {
+    if (mode === 'tcc') return [make(`baseline-tcc-${arch}`)];
+    if (restore) return [make(`baseline-smoke-${arch}`)];
+    return [['bash', ['scripts/viral.sh', 'baseline', arch], { MODE: 'smoke' }]];
+  }
+  if (FIXED_PROFILE.includes(scenario)) {
+    const target = scenario === 'organic' ? `viral-organic-${arch}` : `viral-peak-${arch}`;
+    return [make(target, { MODE: mode })];
+  }
   if (mode === 'tcc') return [make('viral-tcc', { VIRAL_ARCH: arch, SCENARIO: scenario, VUS_MAX: vus })];
   const steps = [];
   if (restore) steps.push(make('viral-restore', { VIRAL_ARCH: arch }));
@@ -168,11 +201,11 @@ function buildSteps({ arch, mode, scenario, vus, restore }) {
 function runSteps(steps, i = 0) {
   if (!current) return;
   if (current.aborting || i >= steps.length) return finish(current.aborting ? 'aborted' : 'success', 0);
-  const [cmd, args] = steps[i];
+  const [cmd, args, envAdd] = steps[i];
   current.step = i;
   pushLine(`$ ${cmd} ${args.join(' ')}`, 'cmd');
   // detached: novo grupo de processos, para que o abort alcance make -> bash -> k6/docker.
-  const child = spawn(cmd, args, { cwd: ROOT, detached: true, env: { ...process.env, FORCE_COLOR: '0' } });
+  const child = spawn(cmd, args, { cwd: ROOT, detached: true, env: { ...process.env, FORCE_COLOR: '0', ...(envAdd ?? {}) } });
   current.child = child;
   current.pgid = child.pid;
   for (const [stream, name] of [[child.stdout, 'out'], [child.stderr, 'err']]) {
@@ -193,7 +226,9 @@ function runSteps(steps, i = 0) {
     current.child = null;
     if (current.aborting) return finish('aborted', code ?? signal);
     // viral.sh load devolve o código do k6 (thresholds reprovados) só depois de gravar contagens.json.
-    if (code !== 0) return finish(current.phase === 'done' ? 'thresholds_failed' : 'failed', code);
+    // No viral, a fase já é 'done' quando o código chega; no baseline (sem drain/done) a pista é a
+    // mensagem de thresholds do k6. Ambos distinguem reprovação de contrato de erro real.
+    if (code !== 0) return finish(current.phase === 'done' || current.thresholdsCrossed ? 'thresholds_failed' : 'failed', code);
     runSteps(steps, i + 1);
   });
 }
@@ -218,7 +253,7 @@ function startRun(params) {
     id, params, status: 'running', phase: 'queued', phaseAt: {}, step: 0,
     commands: steps.map(([c, a]) => `${c} ${a.join(' ')}`),
     startedAt: Date.now(), endedAt: null, resultDir: null, code: null,
-    lines: [], logFile: createWriteStream(path.join(RUN_LOGS, `${id}-${params.arch}-${params.mode}-${params.scenario}.log`)),
+    lines: [], logFile: createWriteStream(path.join(RUN_LOGS, `${id}-${params.kind}-${params.arch}-${params.mode}${params.scenario ? `-${params.scenario}` : ''}.log`)),
   };
   broadcast('start', snapshot());
   runSteps(steps);
@@ -259,13 +294,20 @@ async function readBody(req) {
 }
 
 function validate(b) {
-  const arch = b.arch, mode = b.mode, scenario = b.scenario ?? 'mixed';
+  const kind = b.kind ?? 'viral';
+  if (!KINDS.includes(kind)) return `kind deve ser um de: ${KINDS.join(', ')}`;
+  const arch = b.arch, mode = b.mode;
   if (!ARCHS.includes(arch)) return 'arch deve ser sync ou async';
   if (!MODES.includes(mode)) return 'mode deve ser smoke ou tcc';
+  // Baseline de leitura: sem situação nem degrau configurável (80 VUs smoke; 100→400→600 tcc).
+  if (kind === 'user_lookup') return { kind, arch, mode, scenario: null, vus: null, restore: Boolean(b.restore) };
+  const scenario = b.scenario ?? 'mixed';
   if (!SCENARIOS.includes(scenario)) return `scenario deve ser um de: ${SCENARIOS.join(', ')}`;
+  // organic/viral_peak: pico fixo e restore sempre encadeado pelo target dedicado.
+  if (FIXED_PROFILE.includes(scenario)) return { kind, arch, mode, scenario, vus: null, restore: true };
   const vus = b.vus == null ? 600 : Number(b.vus);
   if (!Number.isInteger(vus) || vus < 1 || vus > 5000) return 'vus deve ser inteiro entre 1 e 5000';
-  return { arch, mode, scenario, vus, restore: Boolean(b.restore) };
+  return { kind, arch, mode, scenario, vus, restore: Boolean(b.restore) };
 }
 
 const server = http.createServer(async (req, res) => {
@@ -277,7 +319,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && p === '/api/status') return send(res, 200, { ...snapshot(), lines: current?.lines.slice(-1500) ?? [] });
     const logMatch = /^\/api\/runs\/([^/]+)\/log$/.exec(p);
     if (req.method === 'GET' && logMatch) {
-      if (!DIR_RE.test(logMatch[1])) return send(res, 400, { error: 'id inválido' });
+      if (!DIR_VIRAL.test(logMatch[1]) && !DIR_BASELINE.test(logMatch[1])) return send(res, 400, { error: 'id inválido' });
       try { return send(res, 200, await fs.readFile(path.join(RESULTS, logMatch[1], 'output.log'), 'utf8'), 'text/plain; charset=utf-8'); }
       catch { return send(res, 404, { error: 'output.log ausente' }); }
     }

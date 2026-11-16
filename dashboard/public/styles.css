@@ -298,6 +298,8 @@ table.runs input { accent-color: var(--ink); width: 16px; height: 16px; margin: 
 .chart .grid { stroke: var(--rule-2); }
 .chart .limit { stroke: var(--bad); stroke-dasharray: 4 3; }
 .chart text.limit-label { fill: var(--bad); font-size: 11px; }
+.chart .contract { stroke: var(--good); stroke-dasharray: 4 3; }
+.chart text.contract-label { fill: var(--good); font-size: 11px; }
 .chart .bar:hover { opacity: .8; }
 
 h3 + .lede { margin-top: .3rem; }

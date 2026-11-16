@@ -150,17 +150,17 @@ Os experimentos serão organizados em cenários que variam a concentração de g
 
 \estrutura\section{\esp Desenvolvimento}
 
-Como o sistema é exclusivamente \textit{backend}, não há telas: a interface é um contrato HTTP comum às duas composições, com quatro operações (publicar um post com distribuição ao feed dos seguidores, compartilhar um post, consultar o feed de um usuário e consultar a árvore de propagação de um post). Como requisitos não funcionais, ambas devem expor as mesmas rotas e validações, operar com o mesmo orçamento de recursos e partir do mesmo estado persistido em cada execução.
+O estudo concentra-se no \textit{backend}: a avaliação recai sobre as duas composições e sobre o contrato HTTP comum a elas, com quatro operações (publicar um post com distribuição ao feed dos seguidores, compartilhar um post, consultar o feed de um usuário e consultar a árvore de propagação de um post). Há uma interface cliente apenas de apoio ao uso do sistema, que não é objeto de medição nem de comparação neste trabalho. Como requisitos não funcionais, ambas as composições devem expor as mesmas rotas e validações, operar com o mesmo orçamento de recursos e partir do mesmo estado persistido em cada execução.
 
 \estrutura\subsection{\esp Modelo de dados e corpus}
 
-O domínio possui usuários, relações de seguir, posts, compartilhamentos e entradas de feed. No MySQL, esses conceitos são tabelas, e a árvore de propagação é obtida por consulta recursiva; no Neo4j, os vínculos são relações do grafo, como \texttt{(:User)-[:FOLLOWS]->(:User)} e \texttt{(:User)-[:FEED]->(:Post)}, e a árvore é percorrida a partir do nó do post. Nas duas composições o feed é materializado: cada publicação ou compartilhamento grava uma entrada por destinatário, de modo que o custo de escrita cresce com o grau de saída de quem publica.
+O domínio possui usuários, relações de seguir, posts, compartilhamentos e entradas de feed. No MySQL, esses conceitos são tabelas, e a árvore de propagação é obtida por consulta recursiva; no Neo4j, cada usuário, post e entrada de feed é um nó, e os vínculos entre eles, como seguir um usuário ou ter um post no feed, são ligações diretas entre esses nós, de modo que a árvore de propagação é percorrida seguindo essas ligações a partir do post. Nas duas composições o feed é materializado: cada publicação ou compartilhamento grava uma entrada por destinatário, de modo que o custo de escrita cresce com o grau de saída de quem publica.
 
-O corpus é gerado por um programa determinístico (semente 42) e contém 10.020 usuários, 126.323 relações de seguir, 15.003 posts, 34.297 compartilhamentos e 532.820 entradas de feed. Os 10.000 usuários comuns têm número de seguidores sorteado de uma distribuição de Zipf truncada entre 1 e 30, enquanto 20 celebridades possuem entre 2.150 e 5.000 seguidores cada. Essa assimetria torna o grau de saída uma variável controlada: uma ação de celebridade produz milhares de entradas de feed, e a de um usuário comum, poucas dezenas. Os 150 posts virais possuem cascatas pré-geradas de até seis níveis. O estado de cada banco é salvo e restaurado antes de cada execução.
+Os dados são gerados por um programa determinístico e contêm 10.020 usuários, 126.323 relações de seguir, 15.003 posts, 34.297 compartilhamentos e 532.820 entradas de feed. Os 10.000 usuários comuns têm de 1 a 30 seguidores, com a maioria concentrada em poucos seguidores, enquanto 20 celebridades possuem entre 2.150 e 5.000 seguidores cada. Essa assimetria torna o grau de saída uma variável controlada: uma ação de celebridade produz milhares de entradas de feed, e a de um usuário comum, poucas dezenas. Os 150 posts virais possuem cascatas pré-geradas de até seis níveis. O estado de cada banco é salvo e restaurado antes de cada execução.
 
 \estrutura\subsection{\esp Implementação das composições}
 
-A composição síncrona utiliza Laravel 12 sobre PHP 8.4-FPM e MySQL 8.0. Publicação e compartilhamento gravam o registro e as entradas de feed dos seguidores na mesma transação, e a resposta (HTTP 201) só é devolvida após a confirmação. A composição orientada a eventos utiliza Hyperf 3.2 sobre Swoole, RabbitMQ 4.1 e Neo4j 5.26: a API publica a mensagem e responde assim que o \textit{broker} a confirma (HTTP 202 nos compartilhamentos), e um \textit{worker} consome as filas, agrupa até 50 mensagens por lote e grava cada lote em uma única transação. Ambas possuem duas instâncias da API atrás de um Nginx. O Quadro \ref{qua:recursos} resume o orçamento de recursos, idêntico no total.
+A composição síncrona utiliza Laravel 12 sobre PHP 8.4 e MySQL 8.0. Publicação e compartilhamento gravam o registro e as entradas de feed dos seguidores na mesma transação, e a resposta de sucesso só é devolvida após a confirmação da gravação. A composição orientada a eventos utiliza Hyperf 3.2 sobre Swoole, RabbitMQ 4.1 e Neo4j 5.26: a aplicação coloca a solicitação em um serviço de mensageria e responde assim que esse serviço a aceita, sem esperar pela gravação; em seguida, um processo trabalhador consome as mensagens, agrupa até 50 por lote e grava cada lote em uma única transação. Nas duas composições, duas instâncias da aplicação ficam atrás de um servidor Nginx, que distribui as requisições. O Quadro \ref{qua:recursos} resume o orçamento de recursos, idêntico no total.
 
 \begin{quadro}[H]
     \centering
@@ -170,7 +170,7 @@ A composição síncrona utiliza Laravel 12 sobre PHP 8.4-FPM e MySQL 8.0. Publi
     \hline
     \textbf{Componente} & \textbf{Síncrona} & \textbf{Orientada a eventos} \\ \hline
     Nginx + 2 APIs & 0,50 / 704 MiB & 0,50 / 704 MiB \\ \hline
-    \textit{Worker} + RabbitMQ & -- & 0,50 / 896 MiB \\ \hline
+    \textit{Processo trabalhador} + RabbitMQ & -- & 0,50 / 896 MiB \\ \hline
     Banco de dados & MySQL: 1,00 / 2.296 MiB & Neo4j: 0,50 / 1.400 MiB \\ \hline
     \textbf{Total} & \textbf{1,50 / 3.000 MiB} & \textbf{1,50 / 3.000 MiB} \\ \hline
     \end{tabular}
@@ -181,7 +181,7 @@ A composição síncrona utiliza Laravel 12 sobre PHP 8.4-FPM e MySQL 8.0. Publi
 
 \estrutura\subsection{\esp Geração de carga e procedimento experimental}
 
-A carga é produzida pelo k6 2.3.0 em modelo fechado: cada usuário virtual (VU) envia uma requisição, aguarda a resposta e espera entre 50 e 250 ms antes da próxima. Cada execução dura três minutos (subida em duas etapas de 30 s, patamar de 90 s e descida de 30 s). A cada iteração, o VU sorteia uma ação segundo a mistura do cenário (Quadro \ref{qua:cenarios}), e cada escrita é, com igual probabilidade, publicação ou compartilhamento; os posts virais lidos ou compartilhados seguem distribuição de Zipf ($s = 1{,}1$) sobre o ranking de cascatas.
+A carga é produzida pela ferramenta k6. Cada usuário virtual só envia a próxima requisição depois de receber a resposta da anterior, com uma pausa de 50 a 250 ms entre elas. Cada execução dura três minutos: a carga sobe em duas etapas de 30 segundos, mantém-se por 90 segundos e desce em 30 segundos. A cada rodada, o usuário virtual sorteia uma ação conforme a mistura do cenário (Quadro \ref{qua:cenarios}), e cada escrita é, com igual chance, uma publicação ou um compartilhamento; os posts virais lidos ou compartilhados são escolhidos de modo que os mais populares apareçam com mais frequência.
 
 \begin{quadro}[H]
     \centering
@@ -190,76 +190,72 @@ A carga é produzida pelo k6 2.3.0 em modelo fechado: cada usuário virtual (VU)
     \begin{tabular}{|C{2.4cm}|C{12.6cm}|}
     \hline
     \textbf{Cenário} & \textbf{Mistura por iteração} \\ \hline
-    \texttt{baseline} & 80\% leitura de feed; 20\% escrita de usuários comuns. \\ \hline
-    \texttt{fanout} & 80\% ações de celebridades; 20\% leitura de feed. \\ \hline
-    \texttt{graph\_read} & 90\% leitura da árvore de propagação de post viral; 10\% leitura de feed. \\ \hline
-    \texttt{mixed} & 70\% leitura de feed ou árvore; 25\% escrita de comuns; 5\% celebridades. \\ \hline
+    Busca de perfil & 100\% de consultas a perfis de usuário por identificador, sem escritas nem celebridades. \\ \hline
+    Viralização orgânica & 70\% de leituras (feed e árvore de propagação) e 30\% de escritas de usuários comuns, sem celebridades. \\ \hline
+    Pico de viralização & Cascata em fases ao longo do tempo: aquecimento com usuários comuns e leitura; pico de centralidade com ações de celebridades e compartilhamentos; saturação sustentada; e resfriamento somente com leituras. \\ \hline
     \end{tabular}
     \vspace{.1cm}
     \small
     {\footnotesize\\ \textbf{Fonte: Elaborado pelo autor}}
 \end{quadro}
 
-Cada execução restaura o volume do banco, aquece a aplicação somente com leituras, aplica a carga e aguarda a drenagem (filas e \textit{outbox} vazias e contagens estáveis, até 900 s). Como o código 2xx da composição orientada a eventos indica apenas aceitação, os registros persistidos são contados diretamente no banco ao fim da carga e após a drenagem. As composições são executadas uma por vez na mesma máquina (Intel Core i5-1135G7, 8 \textit{threads}, 30 GiB de memória). O Prometheus coleta as séries do k6, a profundidade das filas e o consumo dos contêineres via cAdvisor.
+Cada execução segue sempre os mesmos passos: restaura o banco ao estado inicial, aquece a aplicação apenas com leituras, aplica a carga e aguarda o sistema terminar de processar o que ficou pendente (filas vazias e contagens estáveis, por até 900 segundos). Como a resposta de aceitação da composição orientada a eventos indica apenas que a solicitação foi recebida, os registros efetivamente gravados são contados diretamente no banco ao fim da carga e depois desse processamento. As composições são executadas uma por vez na mesma máquina (Intel Core i5-1135G7, 8 \textit{threads}, 30 GiB de memória). O Prometheus coleta as medições do k6, o tamanho das filas e o consumo dos contêineres, com apoio do cAdvisor.
 
-Foram definidos dois degraus de carga: estresse viral (600 VUs), que busca a saturação, e moderado, calibrado por uma rampa exploratória na composição síncrona, no cenário \texttt{mixed}, com 10, 15, 20, 25, 50 e 100 VUs. O critério foi o maior número de VUs sem falhas nas rotas de usuários comuns, o que resultou em 20 VUs. As ações de celebridades ficaram fora do critério porque parte delas excedeu o tempo limite do k6 (30 s) em todos os degraus da rampa, inclusive no menor.
+Foram definidos dois níveis de carga: um nível de estresse (600 usuários virtuais), que busca levar o sistema à saturação, e um nível moderado, obtido por testes exploratórios na composição síncrona, com 10, 15, 20, 25, 50 e 100 usuários virtuais. Escolheu-se o maior número de usuários sem falhas nas rotas de usuários comuns, o que resultou em 20. As ações de celebridades ficaram fora desse critério porque parte delas ultrapassou o tempo limite de 30 segundos em todos os níveis testados, inclusive no menor.
 
-\estrutura\section{\esp Resultados}
+\estrutura\section{\esp Resultados comentados e analisados}
 
-Os resultados são preliminares. Até esta versão, apenas o cenário \texttt{mixed} foi executado (degrau moderado nas duas composições e estresse na orientada a eventos), uma vez por combinação; por isso, os valores medidos aparecem como marcadores destacados (\resultado{valor}), a serem substituídos pelos resultados finais. A Tabela \ref{tab:resultados} consolida, para cada cenário e degrau, a vazão, o p95 de todas as rotas, a taxa de falhas (respostas 5xx ou tempo limite do k6), o maior \textit{backlog} e o tempo de drenagem. A composição síncrona não possui filas (n.a.).
+Esta seção analisa as três cargas executadas sobre as duas composições. Cada combinação de cenário e arquitetura foi repetida em rodadas curtas de 40 a 66 segundos (quatro na busca de perfil e na viralização orgânica, três no pico de viralização), sobre o mesmo estado salvo do banco, restaurado antes de cada execução. A Tabela \ref{tab:resultados} consolida, por grupo, a média e o desvio-padrão amostral da vazão, do p95 agregado das rotas, da taxa de falhas HTTP, do pico de fila e do tempo de drenagem após a carga. A composição síncrona não possui filas (n.a.).
 
 \begin{table}[H]
 	\centering
-	\caption{Resultados por cenário, composição e degrau de carga}
+	\caption{Resultados consolidados por cenário e composição (média $\pm$ desvio-padrão)}
 	\vspace{-0.3cm}
 	\label{tab:resultados}
 	\small
-	\begin{tabular}{l|c|c|c|c|c|c|c|c}
+	\begin{tabular}{l|c|c|c|c|c|c|c}
 	\hline
-	 & & \multicolumn{3}{c|}{\textbf{Moderado (20 VUs)}} & \multicolumn{4}{c}{\textbf{Estresse (600 VUs)}} \\
-	\textbf{Cenário} & \textbf{Arq.} & \textbf{req/s} & \textbf{p95 (ms)} & \textbf{Falhas} & \textbf{req/s} & \textbf{p95 (ms)} & \textbf{Falhas} & \textbf{Drenagem (s)} \\
+	\textbf{Cenário} & \textbf{Arq.} & \textbf{N} & \textbf{req/s} & \textbf{p95 (ms)} & \textbf{Falhas (\%)} & \textbf{Pico fila} & \textbf{Drenagem (s)} \\
 	\hline
-	\texttt{baseline}    & Sínc. & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & n.a. \\
-	                     & Ev.   & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} \\
-	\texttt{fanout}      & Sínc. & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & n.a. \\
-	                     & Ev.   & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} \\
-	\texttt{graph\_read} & Sínc. & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & n.a. \\
-	                     & Ev.   & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} \\
-	\texttt{mixed}       & Sínc. & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & n.a. \\
-	                     & Ev.   & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} & \resultado{x} \\
+	Busca de perfil & Sínc. & 4 & $56{,}2 \pm 27{,}1$ & $4094{,}3 \pm 3965{,}8$ & $0$ & n.a. & n.a. \\
+	                      & Ev.   & 4 & $36{,}5 \pm 3{,}5$ & $4349{,}5 \pm 332{,}6$ & $0$ & n.a. & n.a. \\
+	Viralização orgânica & Sínc. & 4 & $37{,}0 \pm 2{,}0$ & $2147{,}3 \pm 62{,}0$ & $0{,}05 \pm 0{,}06$ & $0$ & $5 \pm 0$ \\
+	                      & Ev.   & 4 & $20{,}9 \pm 5{,}7$ & $3584{,}0 \pm 1066{,}8$ & $0$ & $301 \pm 93$ & $43 \pm 21$ \\
+	Pico de viralização  & Sínc. & 3 & $5{,}2 \pm 0{,}5$ & $29747{,}7 \pm 437{,}6$ & $6{,}84 \pm 1{,}69$ & $0$ & $57 \pm 1$ \\
+	                      & Ev.   & 3 & $21{,}4 \pm 2{,}3$ & $3139{,}6 \pm 611{,}5$ & $0$ & $618 \pm 39$ & $386 \pm 16$ \\
 	\hline
 	\end{tabular}
 	\vspace{.1cm}
 	{\footnotesize\\ \textbf{Fonte: Elaborada pelo autor}}
 \end{table}
 
-\estrutura\subsection{\esp Cenário \texttt{baseline}}
+\estrutura\subsection{\esp Busca de perfil}
 
-O cenário \texttt{baseline} representa o tráfego cotidiano, sem celebridades, e serve de referência para separar o custo próprio de cada composição do custo do \textit{fan-out} de alto grau. No degrau moderado, o p95 da leitura de feed foi de \resultado{sínc.} na composição síncrona e de \resultado{ev.} na orientada a eventos; o das escritas, de \resultado{sínc.} e \resultado{ev.}. No estresse, \resultado{degradação observada}.
+O cenário de busca de perfil mede a leitura pontual de perfil por identificador sob alta concorrência, sem celebridades, e serve de referência para o custo próprio de cada composição. É o único terreno em que a composição síncrona superou a orientada a eventos: $56{,}2 \pm 27{,}1$ contra $36{,}5 \pm 3{,}5$ req/s, ambas sem qualquer falha HTTP. A busca por chave primária é a operação nativa do banco relacional, e o resultado indica que a configuração do Laravel não era o gargalo. O desvio elevado na composição síncrona reflete a evolução da configuração durante a coleta: com o OPcache e o conjunto de processos do PHP-FPM ajustados para modo de produção, execuções individuais chegaram a cerca de $74$ req/s, bem acima da média do grupo. O estado do banco permaneceu inalterado antes e depois da carga, como esperado de um cenário somente de leitura.
 
-\estrutura\subsection{\esp Cenário \texttt{fanout}}
+\estrutura\subsection{\esp Viralização orgânica}
 
-O cenário \texttt{fanout} concentra a carga nos nós de maior grau de saída: cada ação gera entre 2.000 e 5.000 entradas de feed, custo que integra o tempo de resposta na composição síncrona e é transferido às filas na orientada a eventos. No degrau moderado, as ações de celebridades falharam em \resultado{sínc.} e \resultado{ev.} dos casos, e o \textit{backlog} máximo atingiu \resultado{n} mensagens. No estresse, \resultado{degradação observada}. Repetições do par celebridade e post retornam 422 (\resultado{duplicatas}).
+A viralização orgânica reproduz a escrita de usuários comuns, com grau de saída baixo, em rampa suave e sem a participação de celebridades. As duas composições operaram de forma saudável, sem colapso: $37{,}0 \pm 2{,}0$ req/s na síncrona e $20{,}9 \pm 5{,}7$ req/s na orientada a eventos, com falhas desprezíveis ($0{,}05\%$ na síncrona e nenhuma na orientada a eventos). Como cada evento de usuário comum gera poucas escritas de feed, a disseminação para seguidores permanece pequena e a composição síncrona a absorve dentro do tempo de resposta. A orientada a eventos acumulou uma fila modesta, com pico de $301 \pm 93$ mensagens drenada em $43 \pm 21$ segundos após a carga. Esse atraso é o custo da consistência eventual, já visível fora de um pico, e explica por que a vazão aceita na borda fica abaixo da síncrona neste cenário.
 
-\estrutura\subsection{\esp Cenário \texttt{graph\_read}}
+\estrutura\subsection{\esp Pico de viralização}
 
-O cenário \texttt{graph\_read} isola a consulta da árvore de propagação, operação em que os modelos de dados mais se diferenciam: consulta recursiva sobre tabelas no MySQL e travessia de relações no Neo4j. Com poucas escritas, a comparação recai sobre a latência de leitura: o p95 da árvore foi de \resultado{sínc.} e \resultado{ev.} no degrau moderado e de \resultado{sínc.} e \resultado{ev.} no estresse. \resultado{análise da diferença}. Qualquer explicação deve considerar que o MySQL dispõe do dobro da CPU do Neo4j (Quadro \ref{qua:recursos}).
+O pico de viralização inverte por completo o resultado anterior. O cenário concentra a carga em 20 celebridades, com 2.000 a 5.000 seguidores cada, e dispara cascatas de compartilhamento de até quatro gerações, situação em que a centralidade de grau dos iniciadores domina o comportamento do sistema.
 
-\estrutura\subsection{\esp Cenário \texttt{mixed}}
+A composição síncrona entrou em colapso: a vazão caiu para $5{,}2 \pm 0{,}5$ req/s, a taxa de falhas HTTP subiu para $6{,}84 \pm 1{,}69\%$ e o p95 agregado atingiu $29.747{,}7$ ms, junto ao teto de 30 segundos imposto pelo k6. As rotas de celebridade bateram nesse teto em todos os percentis nas três execuções, ou seja, toda ação de celebridade expirou. A mediana global baixa, em torno de $18$ ms, é enganosa: ela reflete as leituras rápidas de usuários comuns, enquanto a cauda longa, formada pelas escritas de alta disseminação, trava o sistema. Há ainda um efeito observado, mas não instrumentado diretamente: o banco relacional continua gravando as transações de alto custo por cerca de 57 segundos após o término da carga (tempo de drenagem síncrono de $57 \pm 1$ s), de modo que parte das escritas persiste mesmo depois de o cliente já ter recebido o tempo limite.
 
-O cenário \texttt{mixed} aproxima-se de um pico de viralização em que o tráfego cotidiano disputa recursos com o \textit{fan-out}. No degrau moderado, a vazão foi de \resultado{sínc.} e \resultado{ev.} req/s, com p95 de leitura de \resultado{sínc.} e \resultado{ev.}, e as ações de celebridades falharam em \resultado{sínc.} dos casos na composição síncrona. Ao fim da carga, a composição orientada a eventos havia persistido \resultado{\%} dos compartilhamentos aceitos, e a drenagem durou \resultado{s}. No estresse, \resultado{degradação observada}.
+A composição orientada a eventos sustentou o mesmo estímulo: $21{,}4 \pm 2{,}3$ req/s e nenhuma falha HTTP, pois a resposta na borda é desacoplada da gravação no grafo. Ao fim da carga, havia persistido entre oito e nove vezes mais entradas de feed que a síncrona (da ordem de 630 a 710 mil contra cerca de 77 mil) e deduplicou compartilhamentos repetidos pela operação \texttt{MERGE} no Neo4j. O preço é a consistência eventual: a fila do RabbitMQ atingiu o pico de $618 \pm 39$ mensagens e levou $386 \pm 16$ segundos para drenar, dentro do mesmo teto de 1,50 CPU. A composição não perde requisições, mas difere no tempo a materialização do feed.
 
 \estrutura\subsection{\esp Síntese comparativa}
 
-\resultado{síntese: onde cada composição degrada, em qual métrica e a partir de qual degrau}. As taxas de falha não são diretamente comparáveis: na composição síncrona, a saturação aparece como latência crescente e tempo limite do k6 (30 s); na orientada a eventos, consultas ao Neo4j acima de 10 s retornam 503. Do mesmo modo, a latência de aceitação da composição orientada a eventos só é interpretável junto com o tempo de drenagem e com a diferença entre aceitos e persistidos (\resultado{n}). O consumo de recursos coletado pelo cAdvisor indicou \resultado{gargalo por composição}.
+A comparação mostra uma troca de posições conforme a topologia da carga. A composição síncrona lidera na leitura simples e se mantém competitiva na viralização orgânica, mas colapsa no pico de centralidade; a orientada a eventos é mais lenta nos dois primeiros cenários e passa a ser a única a sustentar vazão e ausência de falhas no pico. As taxas de falha não são diretamente comparáveis: na síncrona a saturação aparece como latência crescente e tempo limite do k6 (30 s); na orientada a eventos, consultas ao Neo4j acima de 10 segundos retornam 503. A vazão aceita na borda desta última só é interpretável junto ao tempo de drenagem e à diferença entre requisições aceitas e persistidas, pois parte do trabalho permanece nas filas após a carga.
 
-\estrutura\section{\esp Considerações Finais}
+\estrutura\section{\esp Conclusões e trabalhos futuros}
 
-Este trabalho comparou uma composição síncrona e outra orientada a eventos sob cascatas de informação associadas à viralização. Os objetivos de modelar redes com conectividade desigual e de implementar um gerador de picos controlados foram atendidos. A submissão ao mesmo estímulo foi realizada, até esta versão, apenas no cenário \texttt{mixed}, e a coleta ainda não inclui o rastreamento distribuído.
+Este trabalho comparou uma composição síncrona, baseada em Laravel e MySQL, e outra orientada a eventos, baseada em Hyperf/Swoole, RabbitMQ e Neo4j, submetidas ao mesmo estímulo de carga em três cenários. A evidência reunida responde à pergunta de pesquisa de forma direta: o desempenho não decorre das tecnologias isoladas, mas da interação entre a arquitetura e a topologia do grafo, em particular da centralidade de grau dos nós que iniciam as cascatas. Na leitura pontual e na difusão orgânica, em que a disseminação para seguidores é pequena, a composição síncrona foi igual ou superior; no pico de viralização, em que poucas celebridades geram cascatas de alto grau, ela colapsou em latência e falhas, enquanto a orientada a eventos preservou a vazão e não registrou erros, ao custo de materializar o feed de forma diferida.
 
-\resultado{conclusão principal: qual composição sustentou cada cenário, em qual métrica e a que custo}. \resultado{resposta ao problema: relação entre grau de saída dos iniciadores e degradação}. \resultado{evidência sobre o efeito do grau de saída do iniciador na degradação de cada composição}.
+Os resultados têm limitações que delimitam seu alcance. As execuções ocorreram em uma única máquina, com teto rígido de 1,50 CPU e 3.000 MiB por composição, sobre um corpus sintético reduzido, e as rodadas foram curtas (40 a 66 segundos). A distribuição de CPU entre os bancos difere entre as composições, ainda que o total seja o mesmo. Por fim, as semânticas de sucesso distintas, resposta concluída na síncrona e aceitação seguida de processamento na orientada a eventos, impedem comparar apenas a latência HTTP sem considerar a drenagem das filas.
 
-Os resultados têm limitações: execuções em uma única máquina, com 1,5 CPU por composição e uma execução por combinação; corpus sintético de porte reduzido; distribuição de CPU entre os bancos diferente, embora com o mesmo total; e semânticas de sucesso distintas, que impedem comparar apenas a latência HTTP. Como trabalhos futuros, propõem-se repetir as execuções para permitir testes estatísticos, instrumentar o rastreamento distribuído, empregar carga aberta, com taxa de chegada controlada, ampliar o corpus e avaliar composições intermediárias, como a síncrona com fila.
+Como trabalhos futuros, propõem-se estratégias híbridas de distribuição de feed, entregando o conteúdo de forma antecipada aos seguidores de usuários comuns e sob demanda no caso das celebridades, de modo a conter a disseminação em massa de alto grau; o escalonamento automático de consumidores em função do tamanho da fila, por exemplo com KEDA, para reduzir a drenagem sob pico; e a validação distribuída em múltiplos nós na nuvem, que remova o teto de nó único. Prevê-se ainda a coleta do rastreamento distribuído por ferramentas de observabilidade, em execução dedicada e separada da bateria estatística para não interferir nas medições de desempenho, e a repetição dos experimentos em rodadas mais longas para fortalecer a inferência.
 
 \iffalse
 

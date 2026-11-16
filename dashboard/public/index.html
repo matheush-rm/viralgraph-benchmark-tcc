@@ -112,6 +112,12 @@
         <form class="exec-form" id="run-form" autocomplete="off">
           <h2>Novo teste</h2>
 
+          <fieldset class="seg" id="f-kind">
+            <legend>O que medir?</legend>
+            <label><input type="radio" name="kind" value="viral" checked><span class="two">Viralização<small>publicações e compartilhamentos em cascata</small></span></label>
+            <label><input type="radio" name="kind" value="user_lookup"><span class="two">Leitura de perfil (baseline)<small>controle: só leituras, contrato de latência</small></span></label>
+          </fieldset>
+
           <fieldset class="seg" id="f-arch">
             <legend>Qual versão testar?</legend>
             <label><input type="radio" name="arch" value="sync" checked><span><i class="swatch sync"></i>Síncrona</span></label>
@@ -124,27 +130,31 @@
             <label><input type="radio" name="mode" value="tcc"><span class="two">Completo, 3 min<small>gera os dados do TCC</small></span></label>
           </fieldset>
 
-          <label class="field">
+          <label class="field" id="f-scenario">
             <span>Situação simulada</span>
             <select name="scenario">
               <option value="mixed">Uso misto do dia a dia (mixed)</option>
               <option value="baseline">Uso comum, sem celebridades (baseline)</option>
               <option value="fanout">Celebridades em ação (fanout)</option>
               <option value="graph_read">Todos olhando o viral (graph_read)</option>
+              <option value="organic">Viralização orgânica, sem celebridades (organic)</option>
+              <option value="viral_peak">Pico de viralização em fases (viral_peak)</option>
             </select>
           </label>
 
-          <fieldset class="seg" id="f-vus" data-only="tcc">
+          <fieldset class="seg" id="f-vus">
             <legend>Quantos usuários ao mesmo tempo?</legend>
             <label><input type="radio" name="vus" value="20"><span class="two">20<small>carga moderada</small></span></label>
             <label><input type="radio" name="vus" value="600" checked><span class="two">600<small>pico viral</small></span></label>
           </fieldset>
 
-          <label class="check" data-only="smoke">
+          <label class="check" id="f-restore">
             <input type="checkbox" name="restore">
             <span>Começar da rede original, desfazendo testes anteriores</span>
           </label>
-          <p class="hint" data-only="tcc">O teste completo sempre volta à rede original antes de começar, para que todos partam do mesmo ponto.</p>
+          <p class="hint" id="f-hint-restore" hidden>O teste completo sempre volta à rede original antes de começar, para que todos partam do mesmo ponto.</p>
+          <p class="hint" id="f-hint-fixed" hidden>Este cenário tem perfil próprio: sempre começa da rede original e usa o pico de usuários definido por ele (50 no teste rápido, 300 no completo).</p>
+          <p class="hint" id="f-hint-baseline" hidden>Teste de controle: só leituras de perfil, sem gravar nada. O rápido sobe a 80 usuários em ~40 s; o completo passa por 100, 400 e 600 em ~5 min.</p>
 
           <details class="cmd-preview">
             <summary>Comando técnico</summary>
@@ -193,18 +203,20 @@
           <p class="lede">Marque dois ou mais testes para comparar lado a lado.</p>
         </div>
         <div class="filters" id="filters">
+          <select data-filter="kind" aria-label="Filtrar teste"><option value="">Todos os testes</option><option value="viral">Viralização</option><option value="user_lookup">Leitura de perfil</option></select>
           <select data-filter="arch" aria-label="Filtrar versão"><option value="">Todas as versões</option><option value="sync">Síncrona</option><option value="async">Com fila</option></select>
           <select data-filter="mode" aria-label="Filtrar tipo"><option value="">Todos os tipos</option><option value="tcc">Completo</option><option value="smoke">Rápido</option></select>
-          <select data-filter="scenario" aria-label="Filtrar situação"><option value="">Todas as situações</option><option value="mixed">Uso misto</option><option value="baseline">Uso comum</option><option value="fanout">Celebridades em ação</option><option value="graph_read">Olhando o viral</option></select>
+          <select data-filter="scenario" aria-label="Filtrar situação"><option value="">Todas as situações</option><option value="mixed">Uso misto</option><option value="baseline">Uso comum</option><option value="fanout">Celebridades em ação</option><option value="graph_read">Olhando o viral</option><option value="organic">Viralização orgânica</option><option value="viral_peak">Pico de viralização</option></select>
           <select data-filter="vus" aria-label="Filtrar intensidade"><option value="">Qualquer intensidade</option></select>
           <button type="button" class="btn ghost" id="btn-reload">Atualizar lista</button>
+          <button type="button" class="btn ghost" id="btn-clear-sel">Limpar seleção</button>
         </div>
       </div>
       <div class="runs-scroll">
         <table class="runs" id="runs-table">
           <thead><tr>
             <th class="c-check"><span class="sr">Selecionar</span></th>
-            <th>Versão</th><th>Tipo</th><th>Situação</th>
+            <th>Teste</th><th>Versão</th><th>Tipo</th><th>Situação</th>
             <th class="num">Usuários</th><th>Quando</th>
             <th class="num" title="vazão, req/s">Pedidos por segundo</th>
             <th class="num" title="taxa de falha HTTP">Falhas</th>
@@ -228,7 +240,7 @@
 
         <p class="hint" id="cmp-context"></p>
         <div class="cards" id="cards"></div>
-        <p class="footnote">Pedidos por segundo e falhas contam só as ações dos usuários simulados. Os tempos de resposta gerais incluem também uma verificação da fila feita uma vez por segundo, que só existe na versão com fila. Quando sobrecarregada, a versão com fila responde com erro após 10 s de espera no banco; a síncrona deixa o pedido esperar até o teste desistir, aos 30 s.</p>
+        <p class="footnote" id="cmp-footnote">Pedidos por segundo e falhas contam só as ações dos usuários simulados. Os tempos de resposta gerais incluem também uma verificação da fila feita uma vez por segundo, que só existe na versão com fila. Quando sobrecarregada, a versão com fila responde com erro após 10 s de espera no banco; a síncrona deixa o pedido esperar até o teste desistir, aos 30 s.</p>
 
         <div class="chart-block">
           <div class="chart-head">
@@ -254,8 +266,8 @@
           <div id="chart-fail" class="chart"></div>
         </div>
 
-        <h3>Prometido × gravado <span class="tech">consistência eventual</span></h3>
-        <p class="lede">Quando o sistema responde “ok”, o pedido foi aceito. Na versão com fila, porém, a gravação acontece depois. A tabela compara quantos pedidos foram aceitos com quantos de fato apareceram no banco de dados: no momento em que os usuários pararam e depois que a fila terminou de esvaziar.</p>
+        <h3 id="audit-title">Prometido × gravado <span class="tech">consistência eventual</span></h3>
+        <p class="lede" id="audit-lede">Quando o sistema responde “ok”, o pedido foi aceito. Na versão com fila, porém, a gravação acontece depois. A tabela compara quantos pedidos foram aceitos com quantos de fato apareceram no banco de dados: no momento em que os usuários pararam e depois que a fila terminou de esvaziar.</p>
         <div class="runs-scroll"><table class="audit" id="audit"></table></div>
       </div>
     </section>

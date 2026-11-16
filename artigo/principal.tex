@@ -1,5 +1,6 @@
 \documentclass[a4paper,12pt]{article}
 \usepackage{times}
+\usepackage{etoolbox}
 \usepackage{abakos}
 \lhead{}
 \usepackage[hidelinks]{hyperref}
@@ -11,6 +12,10 @@
   \def\UrlRight{}%
   \urlstyle{same}%
 }
+\AtBeginEnvironment{thebibliography}{\small}
+\makeatletter
+\apptocmd{\thebibliography}{\setlength{\itemsep}{0pt}\setlength{\parsep}{0pt}}{}{}
+\makeatother
 \makeatother
 
 \newcommand{\monog}{Teoria dos Grafos e Observabilidade: análise comparativa de arquiteturas \textit{backend} sob estresse de viralização}
