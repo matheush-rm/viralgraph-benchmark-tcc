@@ -12,6 +12,7 @@ use App\Repositories\FollowRepository;
 use App\Repositories\PostRepository;
 use App\Repositories\ShareRepository;
 use App\Repositories\UserRepository;
+use App\Support\Telemetry;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -64,15 +65,19 @@ class ShareService
         }
 
         try {
-            return DB::transaction(function () use ($userId, $postId, $post, $sourceUserId): Share {
-                $share = $this->shares->create($userId, $postId, $sourceUserId);
+            // Span do POST /posts/{id}/share: engloba a transação MySQL e o fan-out em chunks
+            // (no-op quando OTEL_ENABLED != 1, custo zero na bateria estatística).
+            return Telemetry::span('POST /posts/{id}/share', function () use ($userId, $postId, $post, $sourceUserId): Share {
+                return DB::transaction(function () use ($userId, $postId, $post, $sourceUserId): Share {
+                    $share = $this->shares->create($userId, $postId, $sourceUserId);
 
-                $recipients = $this->follows->followerIdsOf($userId)
-                    ->reject(fn (string $id): bool => $id === $post->user_id)->values()->all();
-                $this->feedItems->fanOut($recipients, $postId, 'share', $userId, $share->id);
+                    $recipients = $this->follows->followerIdsOf($userId)
+                        ->reject(fn (string $id): bool => $id === $post->user_id)->values()->all();
+                    $this->feedItems->fanOut($recipients, $postId, 'share', $userId, $share->id);
 
-                return $share;
-            }, 3);
+                    return $share;
+                }, 3);
+            }, ['post_id' => $postId, 'usuario_id' => $userId]);
         } catch (QueryException $exception) {
             if (UserService::isUniqueViolation($exception)) {
                 throw ValidationException::withMessages([

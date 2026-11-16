@@ -7,6 +7,8 @@ Swoole\Runtime::enableCoroutine(SWOOLE_HOOK_FLAGS);
 date_default_timezone_set('UTC');
 Hyperf\Di\ClassLoader::init();
 $container = require BASE_PATH.'/config/container.php';
+// Rastreamento distribuído: monta o TracerProvider uma vez por processo (no-op se OTEL_ENABLED != 1).
+App\Infrastructure\Telemetry\Telemetry::bootstrap('hyperf-async-worker');
 Swoole\Coroutine\run(function () use ($container) {
     try {
         $container->get(App\Worker\Runner::class)->run();

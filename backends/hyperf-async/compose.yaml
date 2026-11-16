@@ -16,6 +16,14 @@ x-app: &app
     FLUSH_MS: ${FLUSH_MS:-5}
     DISTRIBUTION_SLICE_MS: ${DISTRIBUTION_SLICE_MS:-50}
     SHARE_PREFETCH: ${SHARE_PREFETCH:-50}
+    # Rastreamento distribuído: no-op por padrão (OTEL_ENABLED != 1); ligado só na rodada de
+    # evidência de trace (make trace-evidence). O backend OTLP (Jaeger) fica fora do orçamento.
+    OTEL_ENABLED: ${OTEL_ENABLED:-0}
+    OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4318}
+    OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-0.02}
+  # Alcança o Jaeger (network_mode host, OTLP 4318) sem alterar os limites de CPU/memória.
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
   depends_on:
     api1: {condition: service_healthy}
   ulimits:

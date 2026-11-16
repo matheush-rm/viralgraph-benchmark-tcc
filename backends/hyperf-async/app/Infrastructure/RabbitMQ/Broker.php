@@ -4,6 +4,7 @@ namespace App\Infrastructure\RabbitMQ;
 
 use Hyperf\Amqp\AMQPConnection;
 use PhpAmqpLib\Message\AMQPMessage;
+use PhpAmqpLib\Wire\AMQPTable;
 
 class Broker
 {
@@ -30,14 +31,22 @@ class Broker
         }
     }
 
-    public function publish(string $queue, array $payload): void
+    public function publish(string $queue, array $payload, ?string $traceparent = null): void
     {
         $this->rejected = false;
         $this->confirmed = false;
-        $this->channel->basic_publish(new AMQPMessage(json_encode($payload, JSON_THROW_ON_ERROR), [
+        $properties = [
             'delivery_mode' => AMQPMessage::DELIVERY_MODE_PERSISTENT,
             'content_type' => 'application/json',
-        ]), '', $queue, true);
+        ];
+        // Propagação W3C: o traceparent do span da API viaja como header AMQP; o worker o extrai
+        // de cada mensagem para ligar o consumo em lote ao trace de origem. Ausente quando o
+        // rastreamento está desligado (OTEL_ENABLED != 1), sem custo adicional na publicação.
+        if ($traceparent !== null) {
+            $properties['application_headers'] = new AMQPTable(['traceparent' => $traceparent]);
+        }
+        $this->channel->basic_publish(new AMQPMessage(json_encode($payload, JSON_THROW_ON_ERROR),
+            $properties), '', $queue, true);
         $this->channel->wait_for_pending_acks_returns(3);
         if ($this->rejected || !$this->confirmed) {
             throw new \RuntimeException('Publicação rejeitada pelo broker.');

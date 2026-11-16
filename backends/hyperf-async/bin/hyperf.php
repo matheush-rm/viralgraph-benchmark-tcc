@@ -6,4 +6,6 @@ define('SWOOLE_HOOK_FLAGS', Hyperf\Engine\DefaultOption::hookFlags());
 date_default_timezone_set('UTC');
 Hyperf\Di\ClassLoader::init();
 $container = require BASE_PATH.'/config/container.php';
+// Rastreamento distribuído: monta o TracerProvider uma vez por processo (no-op se OTEL_ENABLED != 1).
+App\Infrastructure\Telemetry\Telemetry::bootstrap('hyperf-async-api');
 $container->get(Hyperf\Contract\ApplicationInterface::class)->run();

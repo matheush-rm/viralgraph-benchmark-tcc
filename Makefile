@@ -15,7 +15,8 @@ pdf:
 	bash scripts/render-latex.sh
 
 # Cenário de viralização (ver code/docs/viralizacao.md). VIRAL_ARCH=sync|async, MODE=smoke|tcc,
-# SCENARIO=baseline|fanout|graph_read|mixed, VUS_MAX=degrau de carga do MODE=tcc.
+# SCENARIO=baseline|fanout|graph_read|mixed|organic|viral_peak, VUS_MAX=degrau de carga do MODE=tcc
+# (não se aplica a organic/viral_peak, cujo pico de VUs é fixo pelo cenário).
 VIRAL_ARCH ?= sync
 MODE ?= smoke
 SCENARIO ?= mixed
@@ -59,6 +60,38 @@ baseline-tcc-sync:
 baseline-tcc-async:
 	bash scripts/viral.sh restore async && MODE=tcc bash scripts/viral.sh baseline async
 
+# Cenários finais de viralização (ver code/docs/cenarios.md e code/docs/viralizacao.md):
+# organic (escrita comum sem celebridade, rampa suave) e viral_peak (cascata em fases). Cada target
+# restaura o snapshot limpo antes da carga; o pico de VUs é fixo pelo cenário (não usa VUS_MAX).
+.PHONY: viral-organic-sync viral-organic-async viral-peak-sync viral-peak-async
+viral-organic-sync:
+	bash scripts/viral.sh restore sync && MODE=$(MODE) SCENARIO=organic bash scripts/viral.sh load sync
+viral-organic-async:
+	bash scripts/viral.sh restore async && MODE=$(MODE) SCENARIO=organic bash scripts/viral.sh load async
+viral-peak-sync:
+	bash scripts/viral.sh restore sync && MODE=$(MODE) SCENARIO=viral_peak bash scripts/viral.sh load sync
+viral-peak-async:
+	bash scripts/viral.sh restore async && MODE=$(MODE) SCENARIO=viral_peak bash scripts/viral.sh load async
+
 # Relatório de resultados gerado a partir de code/k6/results (não editar à mão).
 resultados:
 	python3 scripts/resultados.py
+
+# Bateria oficial de experimentos (ver code/docs/cenarios.md e code/docs/viralizacao.md).
+# A suite estatística roda com o OpenTelemetry DESLIGADO; o tracing é coletado à parte.
+.PHONY: tcc-suite smoke-suite trace-evidence
+# Bateria completa: 3 repetições dos três cenários finais (baseline, organic, viral_peak) × sync/async.
+tcc-suite:
+	MODE=tcc REPS=3 bash scripts/run_tcc_suite.sh
+# Fumaça da bateria: 2 repetições em MODE=smoke, para validar o fluxo sem a coleta oficial.
+smoke-suite:
+	MODE=smoke REPS=2 bash scripts/run_tcc_suite.sh
+# Evidência de rastreamento distribuído: rodada ÚNICA com OpenTelemetry ligado para gerar a figura
+# no Jaeger (UI http://127.0.0.1:16686). Suba o Jaeger antes (bash scripts/viral.sh obs up).
+# Fora da bateria estatística: o custo da instrumentação não entra nas métricas de desempenho.
+TRACE_ARCH ?= async
+TRACE_SCENARIO ?= viral_peak
+trace-evidence:
+	OTEL_ENABLED=1 OTEL_SDK_DISABLED=false OTEL_TRACES_SAMPLER_ARG=$${OTEL_TRACES_SAMPLER_ARG:-0.02} \
+		REPS=1 MODE=$(MODE) ARCHS="$(TRACE_ARCH)" SCENARIOS="$(TRACE_SCENARIO)" \
+		bash scripts/run_tcc_suite.sh

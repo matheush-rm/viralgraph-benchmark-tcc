@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import statistics
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -115,16 +116,24 @@ def duration_ms(summary):
 
 
 def max_vus(run):
+    # Preferir o pico das stages do cenário `traffic` quando o export as traz (nem toda versão do
+    # k6 inclui `options` no summary-export).
+    stages = ((run['summary'].get('options') or {}).get('scenarios') or {}).get('traffic', {}).get('stages')
+    if stages:
+        return max(stage.get('target', 0) for stage in stages)
     vus = stat_of(run['summary'], 'vus_max', 'value')
     if vus:
-        return int(vus)
+        vus = int(vus)
+        # A métrica `vus_max` conta também o VU único da sonda de fila (presente só quando o k6
+        # publicou `rabbitmq_queue_total`, i.e. no async com fila). Descontá-lo iguala o pico de
+        # carga entre sync e async e permite o pareamento por configuração.
+        if run['kind'] == 'viral' and 'rabbitmq_queue_total' in (run['summary'].get('metrics') or {}):
+            vus -= 1
+        return vus
     if run['vus_dir']:
         return run['vus_dir']
     if run['kind'] == 'baseline':
         return 80 if run['mode'] == 'smoke' else 600
-    stages = ((run['summary'].get('options') or {}).get('scenarios') or {}).get('traffic', {}).get('stages')
-    if stages:
-        return max(stage.get('target', 0) for stage in stages)
     return None
 
 
@@ -179,6 +188,13 @@ def render_run_row(run):
         row.append(fmt(rate, 3) if rate is not None else '—')
     row.append(fmt(stat_of(summary, 'http_5xx', 'count'), 0))
     row.append(fmt(stat_of(summary, 'http_timeouts', 'count'), 0))
+    if run['kind'] == 'viral':
+        drenagem = (run['contagens'] or {}).get('drenagem') or {}
+        row.append(fmt(drenagem.get('pico_fila'), 0))
+        segundos = drenagem.get('segundos_total')
+        if segundos is None:
+            segundos = drenagem.get('segundos')
+        row.append(fmt(segundos, 0))
     ok = all(ok for _, _, ok in thresholds_status(summary))
     row.append('sim' if ok else 'não')
     return '| ' + ' | '.join(row) + ' |'
@@ -190,7 +206,10 @@ def run_header(kind):
     cells += ['falha HTTP']
     if kind == 'baseline':
         cells += ['contract_errors']
-    cells += ['5xx', 'timeouts', 'thresholds']
+    cells += ['5xx', 'timeouts']
+    if kind == 'viral':
+        cells += ['pico fila', 'drenagem (s)']
+    cells += ['thresholds']
     return '| ' + ' | '.join(cells) + ' |\n|' + '|'.join([' --- '] * len(cells)) + '|'
 
 
@@ -232,11 +251,24 @@ def render_state(run):
     drenagem = contagens.get('drenagem') or {}
     persistidos = contagens.get('persistidos_final') or {}
     aceitos = contagens.get('aceitos') or {}
+    # Campos de pico de fila e tempo total de drenagem; ausentes viram — na tabela, nunca inventados.
+    resumo_drenagem = {
+        'completa': drenagem.get('completa'),
+        'segundos': drenagem.get('segundos'),
+        'segundos_total': drenagem.get('segundos_total'),
+        'pico_fila': drenagem.get('pico_fila'),
+    }
+    for extra in ('pico_fila_k6', 'pico_fila_drenagem'):
+        if extra in drenagem:
+            resumo_drenagem[extra] = drenagem.get(extra)
+    for passthrough in ('timeout_s', 'intervalo_s', 'filas_restantes'):
+        if passthrough in drenagem:
+            resumo_drenagem[passthrough] = drenagem.get(passthrough)
     return (
         '```json\n' + json.dumps(
             {'aceitos': aceitos,
              'persistidos_final': persistidos,
-             'drenagem': drenagem}, ensure_ascii=False, indent=2) + '\n```\n'
+             'drenagem': resumo_drenagem}, ensure_ascii=False, indent=2) + '\n```\n'
     )
 
 
@@ -255,6 +287,120 @@ def render_section(runs, title, kind, intro):
     return '\n'.join(parts)
 
 
+def _run_scenario(run):
+    """Rótulo de cenário estável para o agrupamento estatístico. No baseline de controle o
+    cenário é sempre `user_lookup`; nos virais, o SCENARIO da pasta (organic, viral_peak, ...)."""
+    return run['scenario']
+
+
+def _queue_peak(run):
+    if run['kind'] != 'viral':
+        return None
+    drenagem = (run['contagens'] or {}).get('drenagem') or {}
+    return drenagem.get('pico_fila')
+
+
+def _drain_seconds(run):
+    if run['kind'] != 'viral':
+        return None
+    drenagem = (run['contagens'] or {}).get('drenagem') or {}
+    value = drenagem.get('segundos_total')
+    if value is None:
+        value = drenagem.get('segundos')
+    return value
+
+
+def _mean_sd(values):
+    """(média, desvio) de uma amostra; desvio = None quando N < 2 (um único ponto)."""
+    numbers = [v for v in values if isinstance(v, (int, float))]
+    if not numbers:
+        return None, None, 0
+    mean = statistics.mean(numbers)
+    sd = statistics.stdev(numbers) if len(numbers) >= 2 else None
+    return mean, sd, len(numbers)
+
+
+def _fmt_stat(values, digits=1):
+    """"média ± desvio" a partir das amostras; — se não há amostra, ± — se N < 2."""
+    mean, sd, _ = _mean_sd(values)
+    if mean is None:
+        return '—'
+    if sd is None:
+        return f'{fmt(mean, digits)} ± —'
+    return f'{fmt(mean, digits)} ± {fmt(sd, digits)}'
+
+
+def render_consolidation(runs, mode='tcc'):
+    """Agrega as repetições da bateria oficial por (cenário, arquitetura, modo).
+
+    Imprime média ± desvio (statistics.mean/stdev; desvio = — quando N < 2) de req/s, p50, p95,
+    p99, taxa de erro (%), pico de fila e drenagem (s), além de N por grupo. Nada é inventado:
+    métricas ausentes numa execução não entram na amostra e grupos sem dados exibem —.
+    """
+    selected = [run for run in runs if run['mode'] == mode]
+    title = f'## Consolidação Estatística (MODE={mode})\n'
+    intro = (
+        f'Agregação das repetições da bateria oficial (`scripts/run_tcc_suite.sh`, '
+        f'`MODE={mode}`) por cenário e arquitetura. Cada célula traz **média ± desvio-padrão '
+        f'amostral** das execuções do grupo; o desvio aparece como — quando há uma única amostra '
+        f'(N < 2). `N` é o número de execuções agregadas. As colunas de pico de fila e drenagem '
+        f'aplicam-se só aos cenários de viralização (— no baseline). Valores derivam apenas dos '
+        f'artefatos reais das execuções; grupos ou métricas sem dado exibem —.\n'
+    )
+    if not selected:
+        return title + '\n' + intro + f'\n_Ainda não há execuções registradas com `MODE={mode}`._\n'
+
+    groups = {}
+    for run in selected:
+        key = (run['kind'], _run_scenario(run), run['arch'])
+        groups.setdefault(key, []).append(run)
+
+    header = (
+        '| cenário | arquitetura | N | req/s | p50 (ms) | p95 (ms) | p99 (ms) '
+        '| erro (%) | pico fila | drenagem (s) |'
+    )
+    sep = '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |'
+    lines = [title, intro, header, sep]
+    for (kind, scenario, arch), members in sorted(groups.items()):
+        reqs = [stat_of(run['summary'], 'http_reqs', 'rate') for run in members]
+        p50 = [stat_of(run['summary'], 'http_req_duration', 'p(50)') for run in members]
+        p95 = [stat_of(run['summary'], 'http_req_duration', 'p(95)') for run in members]
+        p99 = [stat_of(run['summary'], 'http_req_duration', 'p(99)') for run in members]
+        # Taxa de falha HTTP (0..1) convertida em porcentagem; None fora da amostra.
+        err = [(rate_ratio(run['summary'], 'http_req_failed') or 0) * 100
+               if rate_ratio(run['summary'], 'http_req_failed') is not None else None
+               for run in members]
+        err = [e for e in err if e is not None]
+        peak = [_queue_peak(run) for run in members]
+        drain = [_drain_seconds(run) for run in members]
+        label = f'{kind}/{scenario}' if kind == 'viral' else scenario
+        row = [
+            label, arch, str(len(members)),
+            _fmt_stat(reqs, 1), _fmt_stat(p50, 1), _fmt_stat(p95, 1), _fmt_stat(p99, 1),
+            _fmt_stat(err, 2),
+            _fmt_stat(peak, 0) if kind == 'viral' else '—',
+            _fmt_stat(drain, 0) if kind == 'viral' else '—',
+        ]
+        lines.append('| ' + ' | '.join(row) + ' |')
+    return '\n'.join(lines) + '\n'
+
+
+def render_consolidation_blocks(runs):
+    """Bloco oficial da bateria (MODE=tcc) sempre presente; quando houver repetições em MODE=smoke
+    (validação por `make smoke-suite`), acrescenta um bloco smoke equivalente para conferir a
+    agregação média ± desvio antes da coleta oficial."""
+    blocks = [render_consolidation(runs, 'tcc')]
+    smoke_groups = {}
+    for run in runs:
+        if run['mode'] == 'smoke':
+            smoke_groups.setdefault((run['kind'], _run_scenario(run), run['arch']), []).append(run)
+    if any(len(members) >= 2 for members in smoke_groups.values()):
+        blocks.append('> Validação (`make smoke-suite`): a agregação abaixo confirma o cálculo de '
+                      'média ± desvio em `MODE=smoke`; os números oficiais vêm da bateria `MODE=tcc`.\n')
+        blocks.append(render_consolidation(runs, 'smoke'))
+    return '\n'.join(blocks)
+
+
 def render_comparison(runs):
     """Números observados lado a lado quando as duas arquiteturas têm a mesma configuração."""
     pairs = {}
@@ -266,10 +412,12 @@ def render_comparison(runs):
         return ('## Comparações observadas (sync × async)\n\n'
                 '_Ainda não há pares completos de execuções equivalentes nas duas arquiteturas._\n')
     lines = ['## Comparações observadas (sync × async)\n',
-             'Apenas números das execuções listadas acima, sem interpretação.\n',
+             'Apenas números das execuções listadas acima, sem interpretação. As colunas de pico de '
+             'fila e drenagem aplicam-se só aos cenários de viralização (— no baseline).\n',
              '| configuração | req/s sync | req/s async | p50 sync | p50 async | p95 sync | p95 async '
-             '| p99 sync | p99 async | falha sync | falha async |',
-             '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |']
+             '| p99 sync | p99 async | falha sync | falha async '
+             '| pico fila sync | pico fila async | drenagem sync (s) | drenagem async (s) |',
+             '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |']
     for (kind, scenario, mode, vus), archs in sorted(matched.items(), key=lambda kv: kv[0]):
         label = f'{kind}/{scenario} — {mode}' + (f' — {vus} VUs' if vus else '')
         cells = [label]
@@ -282,6 +430,16 @@ def render_comparison(runs):
                     cells.append(fmt(rate_ratio(summary, 'http_req_failed'), 3))
                 else:
                     cells.append(fmt(stat_of(summary, 'http_req_duration', TREND_KEYS[index - 1][0]), 1))
+        for field in ('pico_fila', 'segundos_total'):
+            for arch in ('sync', 'async'):
+                if kind == 'viral':
+                    drenagem = (archs[arch]['contagens'] or {}).get('drenagem') or {}
+                    value = drenagem.get(field)
+                    if value is None and field == 'segundos_total':
+                        value = drenagem.get('segundos')
+                    cells.append(fmt(value, 0))
+                else:
+                    cells.append('—')
         lines.append('| ' + ' | '.join(cells) + ' |')
     return '\n'.join(lines) + '\n'
 
@@ -325,9 +483,15 @@ def main(argv=None):
 
 {render_section(viral, 'Viralização (viral.js)', 'viral',
     'Cenários de escrita/leitura sobre o snapshot Zipf: cascatas de compartilhamento, fan-out de '
-    'celebridades e leituras de feed/árvore. Detalhes em '
-    '[viralizacao.md](viralizacao.md). Contagens `aceitos × persistidos` e drenagem em '
-    '`contagens.json`.')}
+    'celebridades e leituras de feed/árvore. Além das misturas estáticas (`baseline`, `fanout`, '
+    '`graph_read`, `mixed`), incluem-se `organic` (escrita comum sem celebridade, rampa suave) e '
+    '`viral_peak` (cascata em fases: aquecimento, pico de centralidade, platô e resfriamento). '
+    'Detalhes em [viralizacao.md](viralizacao.md). As colunas `pico fila` e `drenagem (s)` trazem o '
+    'pico de profundidade de fila observado (`drenagem.pico_fila`) e o tempo total até a parada '
+    'completa da drenagem (`drenagem.segundos_total`); contagens `aceitos × persistidos` e drenagem '
+    'completas em `contagens.json`.')}
+
+{render_consolidation_blocks(runs)}
 
 {render_comparison(runs)}
 """

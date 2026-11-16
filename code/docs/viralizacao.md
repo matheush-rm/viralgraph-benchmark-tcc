@@ -58,6 +58,8 @@ MODE=smoke scripts/viral.sh load sync         # 30 s, 50 VUs (SCENARIO padrão: 
 make viral-tcc VIRAL_ARCH=async SCENARIO=fanout   # restore do snapshot + warmup + MODE=tcc (3 min)
 make viral-tcc-all VIRAL_ARCH=sync                # os 4 cenários, restore limpo antes de cada um
 make viral-tcc-levels VIRAL_ARCH=sync             # um cenário em cada degrau (VIRAL_LEVELS=20 600)
+make viral-organic-async                          # cenário organic (restore limpo; MODE=smoke por padrão)
+make viral-peak-async                             # cenário viral_peak (restore limpo; MODE=smoke por padrão)
 scripts/viral.sh counts async                     # contagens direto no banco, a qualquer momento
 ```
 
@@ -69,10 +71,28 @@ scripts/viral.sh counts async                     # contagens direto no banco, a
 | `fanout` | 80% ações de celebridades (metade `POST /posts`, metade `POST /posts/:id/share` de post viral alheio, origem = autor); 20% `GET /feed/:id` de comum |
 | `graph_read` | 90% `GET /posts/:id/propagation-tree` de post viral (Zipf `s=1,1` sobre o ranking de cascatas); 10% `GET /feed/:id` |
 | `mixed` (padrão) | 70% leitura (metade feed, metade árvore); 25% escrita de comuns; 5% celebridade (metade post, metade share) |
+| `organic` | 70% leitura (metade feed, metade árvore); 30% escrita de comuns na razão 25:5 (share : `POST /posts` comum). Sem celebridade. |
+| `viral_peak` | cascata em fases; a mistura varia pelo tempo decorrido da carga (ver abaixo) |
 
 Celebridades não seguem ninguém no dataset, então não têm posts no feed; no `fanout` e no `mixed` compartilham post viral de outro autor sorteado uniformemente do pool global de posts virais do snapshot com origem = autor (a API não exige o post no feed, só origem válida), gerando fan-out para seus 2000+ seguidores. Cada par (celebridade, post) só vale uma vez (20 × ~150 pares); repetições retornam 422 e são contadas em `share_duplicates`, o que tende a crescer ao longo do `fanout`.
 
 `MODE=tcc` dura 3 min: `VUS_MAX/2` (30 s) → `VUS_MAX` (30 s) → patamar (1m30) → 0 (30 s). Variáveis: `VUS_MAX` (degrau de carga, ver abaixo), `THINK_MIN_MS`/`THINK_MAX_MS` (padrão 50–250 ms), `ZIPF_S`. Resultados ficam em `code/k6/results/viral-<arch>-<mode>-<cenário>[-vus<N>]-<timestamp>/` (o sufixo `-vus<N>` aparece só no `MODE=tcc`); as séries do Prometheus recebem as tags `experiment=<cenário>` e `vus_max=<N>`.
+
+### Cenários `organic` e `viral_peak`
+
+Os cenários `organic` e `viral_peak` usam executor `ramping-vus` próprio, com pico de VUs fixo (50 no `smoke`, 300 no `tcc`) e independente de `VUS_MAX`. Reaproveitam os mesmos arrays do dataset (`common_users`, `celebrities`, `viral_posts`), sem regeração.
+
+- `organic` sobe a 50 VUs em duas stages no `smoke` (~40 s) e, no `tcc`, ramifica 150 → 300 → 300 (patamar) → 0 (~5 min). A mistura é fixa: 70% leitura e 30% escrita de comuns, com o share respondendo por 25 das 30 partes de escrita e o `POST /posts` comum pelas 5 restantes. Nenhuma ação de celebridade é alcançável, o que isola o crescimento orgânico do efeito de centralidade.
+- `viral_peak` encadeia cinco stages (`smoke` ~55 s; `tcc` ~6 min) agrupadas em quatro fases. A cada iteração o script calcula o tempo decorrido da carga por `exec.scenario.startTime` e seleciona a fase pelos limites cumulativos derivados das durações das stages do `MODE` corrente (sem números duplicados):
+
+  | Fase | Rótulo `actions{kind}` | Mistura |
+  | --- | --- | --- |
+  | Aquecimento | `warmup` | usuários comuns + leitura (feed/árvore); sem celebridade |
+  | Pico de centralidade | `peak_celebrity`, `cascade` | ações de celebridade concentradas + compartilhamento válido e leitura de árvore/feed (cascata limitada a 4 gerações pela API) |
+  | Platô de saturação | `plateau` | escrita e leitura altas sustentadas, com peso de celebridade (tipo `mixed`) |
+  | Resfriamento | `cooldown` | só leitura leve (feed/árvore); abrange as duas últimas stages (queda rápida e sustentação) |
+
+A sonda de fila (`scenarios.queue`) tem a duração ajustada para cobrir toda a janela de carga de cada cenário e modo, sem encerrar antes dela.
 
 ### Degraus de carga
 
@@ -112,6 +132,7 @@ Métricas expostas:
 
 - resumo do k6 (`code/k6/results/viral-*/summary.json` e `output.log`): p50/p95/p99 e taxa de erro por rota (`name`), `http_5xx`, `http_timeouts`, `share_duplicates`;
 - `rabbitmq_queue_depth{queue}` (async): amostrado pelo k6 a cada 1 s no endpoint Prometheus do RabbitMQ;
+- `rabbitmq_queue_total` (async, Trend): soma de todas as filas por amostra de 1 s; o `max` no `summary.json` é o pico de fila observado pelo k6, usado em `contagens.json`;
 - Prometheus/Grafana (dashboard "TCC - Viralização"): séries `k6_*` via remote write, `rabbitmq_queue_messages`, CPU/memória por container (cAdvisor);
 - `contagens.json`: aceitos × persistidos, lidos direto no banco (seção seguinte).
 
@@ -144,9 +165,9 @@ Gravado por `scripts/viral.sh load` em cada execução. As contagens vêm do ban
 | `aceitos.shares` | sucessos de `share` + `celebrity_share` menos `share_duplicates` (422) |
 | `inicio`, `fim_carga`, `final` | `posts`, `shares`, `feed_items`, `tarefas_pendentes` (outbox; sempre 0 no síncrono) e `shares_deduplicados` (ver abaixo) |
 | `persistidos_fim_carga`, `persistidos_final` | diferença em relação a `inicio` |
-| `drenagem` | `completa`, `segundos` (do fim da carga à primeira leitura estável), `timeout_s`, `intervalo_s`, `filas_restantes` |
+| `drenagem` | `completa`, `segundos` (do fim da carga à primeira leitura estável), `segundos_total` (do fim da carga à condição completa de parada; `null` em timeout), `pico_fila` (= `max(pico_fila_k6, pico_fila_drenagem)`), `pico_fila_k6` (max do Trend `rabbitmq_queue_total`), `pico_fila_drenagem` (max observado durante a espera), `timeout_s`, `intervalo_s`, `filas_restantes` |
 
-A drenagem termina quando as filas do RabbitMQ (prontas + sem ack) e a outbox estão vazias e duas leituras seguidas coincidem, ou ao atingir `DRAIN_TIMEOUT_S` (padrão 900 s, também em `make`). `DRAIN_POLL_S` (padrão 5 s) define o intervalo e a resolução do tempo medido. Com `completa=false`, `final` traz a última leitura e `segundos` fica nulo.
+A drenagem termina quando as filas do RabbitMQ (prontas + sem ack) e a outbox estão vazias e duas leituras seguidas coincidem, ou ao atingir `DRAIN_TIMEOUT_S` (padrão 900 s, também em `make`). `DRAIN_POLL_S` (padrão 5 s) define o intervalo e a resolução do tempo medido. Com `completa=false`, `final` traz a última leitura e `segundos` fica nulo. A condição completa de parada não muda; a espera passou a registrar também `pico_fila_drenagem` (maior profundidade de fila observada) e `segundos_total` (tempo total até a parada completa, nulo em timeout). O pico de fila reportado em `pico_fila` combina essa medida com o pico do k6 (`pico_fila_k6`, lido de `rabbitmq_queue_total`), tomando o maior dos dois. No síncrono não há fila nem sonda, logo `pico_fila`, `pico_fila_k6` e `pico_fila_drenagem` ficam em 0 de forma coerente.
 
 ## Limitações conhecidas
 
@@ -155,3 +176,65 @@ A drenagem termina quando as filas do RabbitMQ (prontas + sem ack) e a outbox es
 - As leituras de drenagem rodam enquanto os workers ainda processam e disputam o mesmo host; o custo é pequeno (uma consulta de contagem por intervalo), mas não é nulo.
 - A validação do compartilhamento assíncrono usa o estado já persistido: duplicatas ainda na fila podem receber 202, e o consumer descarta a repetição.
 - O cAdvisor precisa da v0.55+ com o image store do containerd no Docker; a v0.52 não identificava os containers.
+
+## Bateria oficial de repetições (`MODE=tcc`)
+
+A coleta oficial roda por `scripts/run_tcc_suite.sh`, que repete os três cenários finais (baseline
+de busca de perfil, `organic` e `viral_peak`) nas duas composições, restaurando o snapshot limpo
+antes de **cada** repetição (`scripts/viral.sh restore`, que já sobe com `up --wait`, portanto
+espera os healthchecks). As repetições reaproveitam os comandos existentes: o baseline usa
+`scripts/viral.sh baseline`; `organic` e `viral_peak` usam `scripts/viral.sh load` com `SCENARIO`.
+
+```bash
+bash scripts/viral.sh obs up         # Prometheus, Grafana, cAdvisor (e Jaeger, fora do orçamento)
+make tcc-suite                       # REPS=3, MODE=tcc, cenários × arquiteturas
+make smoke-suite                     # REPS=2, MODE=smoke (valida o fluxo, não é coleta oficial)
+make resultados                      # consolida as repetições em code/docs/resultados.md
+DRY_RUN=1 bash scripts/run_tcc_suite.sh   # imprime o plano sem executar
+```
+
+Variáveis: `REPS` (padrão 3), `MODE` (padrão `tcc`), `ARCHS` (padrão `sync async`) e `SCENARIOS`
+(padrão `baseline organic viral_peak`) permitem rodar subconjuntos. Cada passo (restore, baseline,
+load) tem o código de retorno capturado sem abortar a bateria; o log consolidado e o índice de
+`rc` por amostra ficam em `code/k6/results/suite-logs/`. O relatório ganha a seção **Consolidação
+Estatística (MODE=tcc)**, com média ± desvio-padrão amostral (desvio = — quando N < 2) de req/s,
+p50, p95, p99, taxa de erro (%), pico de fila e drenagem (s) por grupo `(cenário, arquitetura)`,
+além de `N`. Nada é inventado: métricas ausentes numa execução não entram na amostra.
+
+A bateria estatística roda com o **OpenTelemetry desligado** (`OTEL_SDK_DISABLED=true` e amostragem
+0), para que o custo da instrumentação não distorça as métricas de desempenho. O rastreamento é
+coletado à parte (próxima seção).
+
+## Rastreamento distribuído (OpenTelemetry + Jaeger)
+
+A evidência de rastreamento distribuído é coletada numa rodada **única e separada**, com o
+OpenTelemetry ligado:
+
+```bash
+bash scripts/viral.sh obs up                          # sobe também o Jaeger (UI :16686)
+make trace-evidence                                   # rodada única OTEL_ENABLED=1 (async/viral_peak)
+make trace-evidence TRACE_ARCH=sync TRACE_SCENARIO=organic   # outra combinação
+```
+
+Componentes e decisões:
+
+- **Backend OTLP**: Jaeger all-in-one (`observability/compose.yaml`), `COLLECTOR_OTLP_ENABLED=true`,
+  OTLP gRPC 4317 e HTTP 4318, UI em `http://127.0.0.1:16686`. Roda em `network_mode: host` e **fora
+  do orçamento** de 1,5 CPU / 3 GB das arquiteturas; só é necessário na rodada de trace.
+- **SDK**: `open-telemetry/sdk` + `open-telemetry/exporter-otlp` via Composer, sem a extensão C. Os
+  containers do SUT alcançam o Jaeger por `host.docker.internal:4318` (`extra_hosts`
+  `host.docker.internal:host-gateway` nos compose, sem tocar nos limites de recurso).
+- **Amostragem**: `traceidratio` com `OTEL_TRACES_SAMPLER_ARG=0.02` (2% dos traces), para registrar
+  o fluxo sem sobrecarregar o caminho quente.
+- **Custo zero quando desligado**: com `OTEL_ENABLED != 1` toda a instrumentação é no-op (um
+  `Telemetry` que retorna antes de tocar o SDK), então a bateria estatística não paga nada.
+- **Composição síncrona**: span server de `POST /posts/{id}/share` em
+  `app/Services/ShareService.php::create`, englobando a transação MySQL e o fan-out em chunks. O
+  PHP-FPM é por requisição; o `TracerProvider` é montado sob demanda e só quando habilitado.
+- **Composição assíncrona**: o `TracerProvider` é montado **uma vez por processo** no bootstrap
+  (`bin/hyperf.php` e `bin/worker.php`), não por requisição, porque o Swoole é de longa duração.
+  Há um span server em `app/Service/ShareService.php::accept`; o traceparent W3C é injetado nos
+  headers AMQP em `app/Infrastructure/RabbitMQ/Broker.php::publish` e extraído de cada mensagem no
+  worker. Como um lote agrega mensagens de traces diferentes, o span do lote (UNWIND no Neo4j em
+  `ShareBatchProcessor`) usa **span links** para cada traceparent de origem, em vez de forjar uma
+  única hierarquia pai-filho (`inject`/`extract` manuais, propagação W3C).

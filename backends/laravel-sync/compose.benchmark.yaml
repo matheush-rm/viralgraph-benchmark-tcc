@@ -35,6 +35,15 @@ x-app: &app
     QUEUE_CONNECTION: sync
     LOG_CHANNEL: stderr
     LOG_LEVEL: error
+    # Rastreamento distribuído: no-op por padrão (OTEL_ENABLED != 1); ligado só na rodada de
+    # evidência de trace (make trace-evidence). O endpoint OTLP fica fora do orçamento de recursos.
+    OTEL_ENABLED: ${OTEL_ENABLED:-0}
+    OTEL_SERVICE_NAME: laravel-sync
+    OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4318}
+    OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-0.02}
+  # Alcança o Jaeger (network_mode host, OTLP 4318) sem alterar os limites de CPU/memória.
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
   depends_on:
     mysql:
       condition: service_healthy

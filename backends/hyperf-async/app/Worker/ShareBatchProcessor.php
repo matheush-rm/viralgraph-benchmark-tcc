@@ -3,6 +3,7 @@ declare(strict_types=1);
 namespace App\Worker;
 
 use App\Repository\ShareRepository;
+use App\Infrastructure\Telemetry\Telemetry;
 use PhpAmqpLib\Message\AMQPMessage;
 
 final class ShareBatchProcessor
@@ -33,7 +34,12 @@ final class ShareBatchProcessor
             return [];
         }
         try {
-            $result = $this->shares->persistBatch($payloads);
+            // Span do lote persistido (UNWIND no Neo4j). O lote mistura mensagens de traces
+            // distintos; cada traceparent de origem entra como SPAN LINK, sem forjar hierarquia.
+            $traceparents = array_map(fn (AMQPMessage $m) => self::traceparentOf($m), $messages);
+            $result = Telemetry::batchSpan('shares UNWIND Neo4j', $traceparents,
+                fn () => $this->shares->persistBatch($payloads),
+                ['lote' => count($messages)]);
         } catch (\RuntimeException $error) {
             if (count($messages) === 1) {
                 fwrite(STDERR, 'shares: '.$error->getMessage().PHP_EOL);
@@ -51,5 +57,17 @@ final class ShareBatchProcessor
                 count($messages), $result['duplicados'], $result['ausentes']));
         }
         return [];
+    }
+
+    /** Lê o header AMQP `traceparent` de uma mensagem; null quando ausente (rastreamento desligado). */
+    private static function traceparentOf(AMQPMessage $message): ?string
+    {
+        if (! $message->has('application_headers')) {
+            return null;
+        }
+        $headers = $message->get('application_headers');
+        $data = $headers instanceof \PhpAmqpLib\Wire\AMQPTable ? $headers->getNativeData() : $headers;
+        $value = is_array($data) ? ($data['traceparent'] ?? null) : null;
+        return is_string($value) ? $value : null;
     }
 }

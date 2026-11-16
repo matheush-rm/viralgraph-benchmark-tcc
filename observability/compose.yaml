@@ -44,5 +44,19 @@ services:
       - /var/run:/var/run:ro
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
+  jaeger:
+    # Backend de rastreamento distribuído OpenTelemetry. FORA do orçamento de recursos das
+    # arquiteturas (1,5 CPU / 3 GB): roda só na rodada de evidência de trace (OTEL_ENABLED=1),
+    # não na bateria estatística. network_mode host para que os containers do SUT alcancem o
+    # endpoint OTLP via host.docker.internal:4318 (extra_hosts host-gateway nos compose do SUT).
+    image: jaegertracing/all-in-one:latest
+    network_mode: host
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    # OTLP gRPC 4317 e HTTP 4318 (ingestão nativa); UI 16686.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:16686/"]
+      interval: 5s
+      retries: 12
 volumes:
   prometheus:
