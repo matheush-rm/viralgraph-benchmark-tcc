@@ -10,10 +10,16 @@ x-app: &app
   volumes:
     - .:/var/www/html
     - "${CORPUS_DIR:?CORPUS_DIR is required}:/benchmark:ro"
+    - ./docker/php/www-benchmark.conf:/usr/local/etc/php-fpm.d/zz-benchmark.conf:ro
+    - ./docker/php/opcache-benchmark.ini:/usr/local/etc/php/conf.d/zz-opcache-benchmark.ini:ro
+    - ./docker/php/disable-xdebug.ini:/usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini:ro
+    - ./docker/php/benchmark-entrypoint.sh:/usr/local/bin/benchmark-entrypoint.sh:ro
+  entrypoint: ["sh", "/usr/local/bin/benchmark-entrypoint.sh"]
   environment: &app-env
     APP_NAME: TCC benchmark sync
-    APP_ENV: local
+    APP_ENV: production
     APP_DEBUG: "false"
+    XDEBUG_MODE: "off"
     APP_KEY: ${APP_KEY:-base64:VFhYc3luY2JlbmNobWFya2xvY2FsZGV2a2V5}
     APP_URL: http://127.0.0.1:${BENCHMARK_PORT:-19998}
     BENCHMARK_MODE: "1"
@@ -28,7 +34,16 @@ x-app: &app
     CACHE_STORE: array
     QUEUE_CONNECTION: sync
     LOG_CHANNEL: stderr
-    LOG_LEVEL: warning
+    LOG_LEVEL: error
+    # Rastreamento distribuído: no-op por padrão (OTEL_ENABLED != 1); ligado só na rodada de
+    # evidência de trace (make trace-evidence). O endpoint OTLP fica fora do orçamento de recursos.
+    OTEL_ENABLED: ${OTEL_ENABLED:-0}
+    OTEL_SERVICE_NAME: laravel-sync
+    OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4318}
+    OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-0.02}
+  # Alcança o Jaeger (network_mode host, OTLP 4318) sem alterar os limites de CPU/memória.
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
   depends_on:
     mysql:
       condition: service_healthy
@@ -41,9 +56,9 @@ x-app: &app
 services:
   api1:
     <<: *app
-    cpus: ${API_CPUS:-0.20}
-    mem_limit: ${API_MEMORY:-320m}
-    memswap_limit: ${API_MEMORY:-320m}
+    cpus: ${API_CPUS:-0.45}
+    mem_limit: ${API_MEMORY:-512m}
+    memswap_limit: ${API_MEMORY:-512m}
     healthcheck:
       test: ["CMD", "php", "-r", "$$s=@fsockopen('127.0.0.1',9000); exit($$s?0:1);"]
       interval: 10s
@@ -52,9 +67,9 @@ services:
 
   api2:
     <<: *app
-    cpus: ${API_CPUS:-0.20}
-    mem_limit: ${API_MEMORY:-320m}
-    memswap_limit: ${API_MEMORY:-320m}
+    cpus: ${API_CPUS:-0.45}
+    mem_limit: ${API_MEMORY:-512m}
+    memswap_limit: ${API_MEMORY:-512m}
     healthcheck:
       test: ["CMD", "php", "-r", "$$s=@fsockopen('127.0.0.1',9000); exit($$s?0:1);"]
       interval: 10s
@@ -92,9 +107,9 @@ services:
     volumes:
       - mysql_benchmark:/var/lib/mysql
       - ./docker/mysql/my.cnf:/etc/mysql/conf.d/my.cnf:ro
-    cpus: ${MYSQL_CPUS:-1.0}
-    mem_limit: ${MYSQL_MEMORY:-2296m}
-    memswap_limit: ${MYSQL_MEMORY:-2296m}
+    cpus: ${MYSQL_CPUS:-0.50}
+    mem_limit: ${MYSQL_MEMORY:-1856m}
+    memswap_limit: ${MYSQL_MEMORY:-1856m}
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$${MYSQL_ROOT_PASSWORD}"]
       interval: 5s

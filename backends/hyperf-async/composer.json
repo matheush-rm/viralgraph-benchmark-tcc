@@ -8,6 +8,7 @@
     "ext-curl": "*",
     "ext-mbstring": "*",
     "ext-swoole": ">=6.0",
+    "guzzlehttp/guzzle": "^7.16",
     "hyperf/amqp": "~3.2.0",
     "hyperf/config": "~3.2.0",
     "hyperf/di": "~3.2.0",
@@ -15,7 +16,10 @@
     "hyperf/framework": "~3.2.0",
     "hyperf/http-server": "~3.2.0",
     "hyperf/validation": "~3.2.0",
-    "php-amqplib/php-amqplib": "^3.7"
+    "open-telemetry/exporter-otlp": "^1.5",
+    "open-telemetry/sdk": "^1.16",
+    "php-amqplib/php-amqplib": "^3.7",
+    "php-http/guzzle7-adapter": "^1.1"
   },
   "autoload": {
     "psr-4": {

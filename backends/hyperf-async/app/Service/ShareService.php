@@ -4,6 +4,7 @@ namespace App\Service;
 
 use App\Exception\ApiError;
 use App\Infrastructure\RabbitMQ\BrokerFactory;
+use App\Infrastructure\Telemetry\Telemetry;
 use App\Repository\ShareRepository;
 use App\Validation\Input;
 
@@ -38,9 +39,14 @@ final class ShareService
         }
         $event = ['id' => Input::id(), 'usuario_id' => $userId, 'post_id' => $postId,
             'origem_usuario_id' => $sourceId, 'criado_em' => Input::now()];
+        // Span server do POST /posts/{id}/share: o traceparent W3C do span é injetado nos headers
+        // AMQP da mensagem, ligando a aceitação (API) ao consumo em lote (worker). No-op se desligado.
+        $traceparent = null;
         $broker = $this->brokers->open();
         try {
-            $broker->publish('shares', $event);
+            Telemetry::serverSpan('POST /posts/{id}/share', function () use ($broker, $event, &$traceparent): void {
+                $broker->publish('shares', $event, $traceparent);
+            }, ['post_id' => $postId, 'usuario_id' => $userId], $traceparent);
         } finally {
             $broker->close();
         }

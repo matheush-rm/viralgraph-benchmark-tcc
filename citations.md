@@ -368,3 +368,36 @@
 - **Data de acesso:** 11 nov. 2026.
 - **Fundamenta:** constraints compostas e de chave em relações indisponíveis na Community Edition (cheat sheet); uso de índices de relação, constraints de unicidade e leitura de planos `PROFILE` na remodelagem do backend Hyperf. A disponibilidade de constraint de unicidade em relação com propriedade única foi verificada empiricamente no Neo4j 5.26.32 Community.
 - **Status:** consultada para implementação técnica; não citada no artigo. Ano não verificado; avaliar critério temporal antes de uso acadêmico.
+
+### OpenTelemetry PHP — SDK e exportador OTLP
+
+- **Títulos:** *PHP* (introdução), *Exporters* e pacotes `open-telemetry/sdk` e `open-telemetry/exporter-otlp`.
+- **Autores institucionais:** OpenTelemetry e seus colaboradores.
+- **Ano e tipo:** documentação e código oficiais contínuos; ano de publicação não identificado.
+- **DOI/identificador:** não identificado; repositórios oficiais `opentelemetry-php/sdk` e `opentelemetry-php/exporter-otlp`.
+- **URLs:** https://opentelemetry.io/docs/languages/php/ , https://opentelemetry.io/docs/languages/php/exporters/ e https://github.com/opentelemetry-php/exporter-otlp .
+- **Data de acesso:** 15 nov. 2026.
+- **Fundamenta:** instrumentação de rastreamento via SDK PHP sem a extensão C, montagem de `TracerProvider`, amostragem por proporção de trace (`TraceIdRatioBasedSampler`) e exportação por OTLP/HTTP para um backend compatível. Usados para instrumentar os spans de compartilhamento nas duas composições e exportar os traces ao Jaeger.
+- **Status:** consultada para implementação técnica; não citada no artigo. Ano não verificado; avaliar o critério temporal antes de uso acadêmico.
+
+### W3C — Trace Context
+
+- **Título:** *Trace Context* (W3C Recommendation), com o formato do cabeçalho `traceparent`.
+- **Autores institucionais:** World Wide Web Consortium (W3C); editores da especificação Trace Context.
+- **Ano e tipo:** 2021; recomendação técnica oficial do W3C (Level 1).
+- **DOI/identificador:** não identificado; identificador de versão: W3C Recommendation de 23 nov. 2021.
+- **URL:** https://www.w3.org/TR/2021/REC-trace-context-1-20211123/ .
+- **Data de acesso:** 15 nov. 2026.
+- **Fundamenta:** formato `version-trace_id-parent_id-trace_flags` do cabeçalho `traceparent` e a propagação de contexto entre serviços; base para a injeção manual do `traceparent` nos cabeçalhos AMQP e a reconstrução do contexto no worker da composição assíncrona.
+- **Status:** consultada para implementação técnica; não citada no artigo.
+
+### Jaeger — backend de rastreamento e ingestão OTLP
+
+- **Títulos:** *Getting Started* (imagem `all-in-one`, variável `COLLECTOR_OTLP_ENABLED`, portas OTLP 4317/4318 e UI 16686) e *Introducing native support for OpenTelemetry in Jaeger*.
+- **Autores institucionais:** The Jaeger Authors (CNCF) e colaboradores.
+- **Ano e tipo:** documentação oficial contínua e artigo técnico do projeto; ano de publicação da documentação não identificado.
+- **DOI/identificador:** não identificado; repositório oficial `jaegertracing/jaeger`, imagem `jaegertracing/all-in-one`.
+- **URLs:** https://www.jaegertracing.io/docs/latest/getting-started/ e https://medium.com/jaegertracing/introducing-native-support-for-opentelemetry-in-jaeger-eb661be8183c .
+- **Data de acesso:** 15 nov. 2026.
+- **Fundamenta:** ingestão nativa de OTLP (gRPC 4317 e HTTP 4318) habilitada por `COLLECTOR_OTLP_ENABLED=true` e visualização dos traces na UI (16686); adotado como backend de rastreamento fora do orçamento de recursos das arquiteturas.
+- **Status:** consultada para implementação técnica; não citada no artigo. Ano da documentação não verificado; avaliar o critério temporal antes de uso acadêmico.

@@ -7,9 +7,11 @@
 #   scripts/viral.sh down     sync|async     derruba o ambiente (remove volumes do projeto)
 #   scripts/viral.sh obs up|down             Prometheus + Grafana + cAdvisor
 #   scripts/viral.sh warmup   sync|async     aquecimento só de leitura (GET), fora da medição
-#   MODE=smoke|tcc SCENARIO=baseline|fanout|graph_read|mixed scripts/viral.sh load sync|async
+#   MODE=smoke|tcc SCENARIO=baseline|fanout|graph_read|mixed|organic|viral_peak scripts/viral.sh load sync|async
 #                                            (roda warmup antes; WARMUP=0 desliga)
 #   SCENARIO=... scripts/viral.sh tcc sync|async   restore + load MODE=tcc (snapshot limpo)
+#   MODE=smoke|tcc scripts/viral.sh baseline sync|async   GET /usuarios/{id} puro (controle;
+#                                            ver code/docs/baseline-user-lookup.md)
 #   scripts/viral.sh counts   sync|async     contagens direto no banco (posts, shares, feed, outbox)
 #
 # VUS_MAX define o degrau de carga do MODE=tcc (padrão 600). Ao fim da carga, o script conta direto
@@ -177,19 +179,22 @@ queue_depth() {
 # Espera a conclusão do trabalho aceito: filas e outbox vazias (async) e contagens iguais em duas
 # leituras seguidas (as duas arquiteturas; no síncrono, requisições abandonadas pelo k6 por timeout
 # ainda podem estar gravando). Imprime JSON com as contagens finais e o tempo de drenagem, medido do
-# fim da carga até a primeira leitura do par estável (resolução = DRAIN_POLL_S).
+# fim da carga até a primeira leitura do par estável (resolução = DRAIN_POLL_S). Registra também o
+# pico de profundidade de fila observado durante a espera (peak_drain) e o tempo total até a condição
+# completa de parada ser satisfeita (segundos_total; null em caso de timeout).
 wait_drain() {
   local arch="$1" timeout="${DRAIN_TIMEOUT_S:-900}" interval="${DRAIN_POLL_S:-5}"
-  local t0 now cur prev="" prev_at=0 depth pending complete=false
+  local t0 now cur prev="" prev_at=0 depth pending complete=false peak=0 total_s=null
   t0=$(date +%s)
   while :; do
     now=$(( $(date +%s) - t0 ))
     cur="$(db_counts "$arch")" || cur=""
     depth=0; [ "$arch" = async ] && depth="$(queue_depth)"
+    [ "$depth" -gt "$peak" ] 2>/dev/null && peak=$depth
     pending="$(jq -r '.tarefas_pendentes' <<<"$cur" 2>/dev/null)" || pending=-1
     log "drenagem ${now}s: filas=$depth $cur"
     if [ -n "$cur" ] && [ "$cur" = "$prev" ] && [ "$depth" = 0 ] && [ "$pending" = 0 ]; then
-      complete=true; break
+      complete=true; total_s=$now; break
     fi
     [ "$now" -ge "$timeout" ] && break
     [ "$cur" = "$prev" ] || prev_at=$now
@@ -198,16 +203,30 @@ wait_drain() {
   done
   jq -cn --argjson final "${cur:-null}" --argjson complete "$complete" --argjson s "$prev_at" \
     --argjson timeout "$timeout" --argjson interval "$interval" --argjson depth "$depth" \
+    --argjson peak "$peak" --argjson total_s "$total_s" \
     '{final: $final, drenagem: {completa: $complete, segundos: (if $complete then $s else null end),
+      segundos_total: $total_s, pico_fila_drenagem: $peak,
       timeout_s: $timeout, intervalo_s: $interval, filas_restantes: $depth}}'
 }
 
 # contagens.json: aceitos (2xx vistos pelo k6) x persistidos (delta no banco) ao fim da carga e após
-# a drenagem. Shares aceitos descontam os 422 (share_duplicates).
+# a drenagem. Shares aceitos descontam os 422 (share_duplicates). O objeto drenagem expõe o pico de
+# fila: pico_fila_k6 (max do Trend rabbitmq_queue_total no summary.json), pico_fila_drenagem (max
+# observado em wait_drain) e pico_fila = max dos dois. No síncrono não há fila nem sonda, então
+# pico_fila_k6 = 0, pico_fila_drenagem = 0 e pico_fila = 0 de forma coerente.
 write_counts() {
   local out="$1" arch="$2" scenario="$3" start="$4" end="$5" drain="$6"
+  local peak_k6 peak_drain pico_fila
+  # k6 v2 grava as estatísticas planas no entry (.max); .values.max é fallback do formato antigo.
+  peak_k6="$(jq -r '(.metrics["rabbitmq_queue_total"].max // .metrics["rabbitmq_queue_total"].values.max // 0)' \
+    "$out/summary.json" 2>/dev/null)" || peak_k6=0
+  [ -n "$peak_k6" ] && [ "$peak_k6" != null ] || peak_k6=0
+  peak_drain="$(jq -r '.drenagem.pico_fila_drenagem // 0' <<<"$drain" 2>/dev/null)" || peak_drain=0
+  [ -n "$peak_drain" ] && [ "$peak_drain" != null ] || peak_drain=0
+  pico_fila="$(jq -rn --argjson a "$peak_k6" --argjson b "$peak_drain" '([$a, $b] | max)')"
   jq -n --arg arch "$arch" --arg scenario "$scenario" --arg mode "${MODE:-smoke}" \
     --argjson vus "${VUS_MAX:-600}" --argjson inicio "$start" --argjson fim "$end" --argjson drain "$drain" \
+    --argjson pico_fila "$pico_fila" --argjson pico_fila_k6 "$peak_k6" --argjson pico_fila_drenagem "$peak_drain" \
     --slurpfile summary "$out/summary.json" '
     def passes(re): [$summary[0].root_group.checks | to_entries[] | select(.key | test(re)) | .value.passes] | add // 0;
     def delta(a; b): {posts: (b.posts - a.posts), shares: (b.shares - a.shares), feed_items: (b.feed_items - a.feed_items),
@@ -218,7 +237,8 @@ write_counts() {
      inicio: $inicio, fim_carga: $fim, final: $drain.final,
      persistidos_fim_carga: (if $fim then delta($inicio; $fim) else null end),
      persistidos_final: (if $drain.final then delta($inicio; $drain.final) else null end),
-     drenagem: $drain.drenagem}' > "$out/contagens.json"
+     drenagem: ($drain.drenagem + {pico_fila: $pico_fila, pico_fila_k6: $pico_fila_k6,
+       pico_fila_drenagem: $pico_fila_drenagem})}' > "$out/contagens.json"
 }
 
 cmd_counts() { db_counts "$1"; }
@@ -257,6 +277,32 @@ cmd_load() {
   return "$rc"
 }
 
+# Baseline (controle): GET /usuarios/{id} puro, Pareto 80/20 sobre o dataset (ver
+# code/docs/baseline-user-lookup.md). Sem escrita: não há drenagem nem contagens de aceitos;
+# /metricas antes e depois prova que a carga de leitura não alterou o estado persistido.
+cmd_baseline() {
+  local arch="$1" port out rc=0
+  require_dataset
+  port="$(port_of "$arch")"
+  out="$ROOT/code/k6/results/baseline-$arch-${MODE:-smoke}-$(date -u +%Y%m%dT%H%M%SZ)"
+  mkdir -p "$out"
+  local outputs=()
+  if curl -fsS -o /dev/null "http://127.0.0.1:9090/-/ready" 2>/dev/null; then
+    outputs=(-o experimental-prometheus-rw)
+    export K6_PROMETHEUS_RW_SERVER_URL="http://127.0.0.1:9090/api/v1/write"
+    export K6_PROMETHEUS_RW_TREND_STATS="p(50),p(95),p(99),avg,max"
+  fi
+  curl -fsS "http://127.0.0.1:$port/metricas" > "$out/metricas-antes.json" || true
+  log "k6 $arch MODE=${MODE:-smoke} baseline_user_lookup -> $out"
+  MODE="${MODE:-smoke}" BASE_URL="http://127.0.0.1:$port" \
+    DATASET="$DATASET/k6/dataset.json" \
+    k6 run "${outputs[@]}" --tag "arch=$arch" --tag "mode=${MODE:-smoke}" --tag "experiment=user_lookup" \
+      --summary-export "$out/summary.json" "$ROOT/code/k6/baseline_user_lookup.js" 2>&1 | tee "$out/output.log" || rc=$?
+  curl -fsS "http://127.0.0.1:$port/metricas" > "$out/metricas.json" || true
+  log "métricas finais: $(cat "$out/metricas.json" 2>/dev/null)"
+  return "$rc"
+}
+
 case "${1:-}" in
   dataset) shift; cmd_dataset "$@" ;;
   snapshot) cmd_snapshot "${2:?sync|async}" ;;
@@ -265,6 +311,7 @@ case "${1:-}" in
   down) cmd_down "${2:?sync|async}" ;;
   obs) cmd_obs "${2:-up}" ;;
   load) cmd_load "${2:?sync|async}" ;;
+  baseline) cmd_baseline "${2:?sync|async}" ;;
   counts) cmd_counts "${2:?sync|async}" ;;
   tcc) cmd_restore "${2:?sync|async}"; MODE=tcc cmd_load "$2" ;;
   *) sed -n '2,20p' "$0"; exit 1 ;;
