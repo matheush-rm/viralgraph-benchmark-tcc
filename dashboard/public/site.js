@@ -131,8 +131,8 @@ async function drawNetwork() {
   const c = ds?.counts;
   if (c?.usuarios) $('#net-users').textContent = fmtInt(c.usuarios);
   $('#net-median').textContent = fmtInt(common.median);
-  if (c?.relacoes_seguir) $('#net-title').textContent = `20 pessoas concentram ${fmtInt((d3.sum(celebs) / c.relacoes_seguir) * 100)}% das conexões`;
-  const facts = c ? [['pessoas', c.usuarios], ['conexões “segue”', c.relacoes_seguir], ['posts', c.posts_criados], ['compartilhamentos', c.compartilhamentos], ['entregas em feeds', c.entradas_feed], ['posts virais', ds.distribution.viral_posts]] : [];
+  if (c?.relacoes_seguir) $('#net-title').textContent = `20 pessoas têm ${fmtInt((d3.sum(celebs) / c.relacoes_seguir) * 100)}% de todos os seguidores`;
+  const facts = c ? [['pessoas', c.usuarios], ['ligações “segue”', c.relacoes_seguir], ['posts', c.posts_criados], ['compartilhamentos', c.compartilhamentos], ['posts entregues em feeds', c.entradas_feed], ['posts virais', ds.distribution.viral_posts]] : [];
   $('#net-facts').replaceChildren(...facts.map(([k, v]) => {
     const d = document.createElement('div');
     d.innerHTML = `<dt>${k}</dt><dd>${fmtInt(v)}</dd>`;
@@ -154,7 +154,7 @@ async function drawNetwork() {
   svg.append('text').attr('x', W - tailW - 24).attr('y', H - 8).attr('text-anchor', 'end').text('20ª');
   const tx = W - tailW;
   svg.append('rect').attr('class', 'common').attr('x', tx).attr('width', tailW).attr('y', y(common.max)).attr('height', Math.max(2, y(0) - y(common.max)));
-  svg.append('text').attr('class', 'tail-label').attr('x', tx).attr('y', y(0) - 46).text('10.000 comuns');
+  svg.append('text').attr('class', 'tail-label').attr('x', tx).attr('y', y(0) - 46).text('10.000 pessoas comuns');
   svg.append('text').attr('x', tx).attr('y', y(0) - 30).text(`mediana ${fmtInt(common.median)} seguidores`);
   svg.append('text').attr('x', tx).attr('y', y(0) - 14).text(`máximo ${fmtInt(common.max)}`);
   const vals = svg.append('g');
@@ -340,12 +340,12 @@ function setupCharts() {
     const x = d3.scaleLinear().domain([0, SIM.END]).range([m.l, W - m.r]);
     const y = d3.scaleLinear().domain([0, yMax]).range([H - m.b, m.t]);
     svg.append('rect').attr('class', 'load-zone').attr('x', x(0)).attr('width', x(SIM.LOAD_END) - x(0)).attr('y', m.t).attr('height', H - m.b - m.t);
-    svg.append('text').attr('x', x(SIM.LOAD_END) - 6).attr('y', m.t + 12).attr('text-anchor', 'end').text('carga ativa');
+    svg.append('text').attr('x', x(SIM.LOAD_END) - 6).attr('y', m.t + 12).attr('text-anchor', 'end').text('chegando pedidos');
     const gx = svg.append('g').attr('transform', `translate(0,${H - m.b})`).call(d3.axisBottom(x).ticks(6).tickFormat((d) => `${d} s`));
     const gy = svg.append('g').attr('transform', `translate(${m.l},0)`);
     if (limit) {
       svg.append('line').attr('class', 'limit').attr('x1', m.l).attr('x2', W - m.r).attr('y1', y(limit)).attr('y2', y(limit));
-      svg.append('text').attr('class', 'limit-label').attr('x', W - m.r).attr('y', y(limit) - 5).attr('text-anchor', 'end').text('limite do cliente (30 s)');
+      svg.append('text').attr('class', 'limit-label').attr('x', W - m.r).attr('y', y(limit) - 5).attr('text-anchor', 'end').text('pessoa desiste (30 s)');
     }
     const ps = svg.append('path').attr('class', 'line sync');
     const pa = svg.append('path').attr('class', 'line async');
@@ -392,12 +392,12 @@ function renderSim(S) {
   const done = S.t >= SIM.END - 0.05;
   if (S.t === 0) { status('#st-sync', '', 'aguardando'); status('#st-async', '', 'aguardando'); }
   else {
-    if (ls >= 25) status('#st-sync', 'bad', 'colapso: clientes desistem');
+    if (ls >= 25) status('#st-sync', 'bad', 'travou: pessoas desistem');
     else if (ls >= 3) status('#st-sync', 'warn', 'lenta');
-    else if (sf > 0.01) status('#st-sync', 'bad', done ? 'concluído com falhas' : 'recuperando');
-    else status('#st-sync', 'ok', done ? 'concluído' : 'saudável');
-    if (pa > 50) status('#st-async', 'warn', S.t > SIM.LOAD_END ? 'drenando a fila' : 'enfileirando');
-    else status('#st-async', 'ok', done ? 'concluído' : 'saudável');
+    else if (sf > 0.01) status('#st-sync', 'bad', done ? 'terminou com erros' : 'se recuperando');
+    else status('#st-sync', 'ok', done ? 'terminou' : 'tranquilo');
+    if (pa > 50) status('#st-async', 'warn', S.t > SIM.LOAD_END ? 'esvaziando a fila' : 'guardando na fila');
+    else status('#st-async', 'ok', done ? 'terminou' : 'tranquilo');
   }
   charts.resp.update(S, 'resp');
   charts.pend.update(S, 'pend');
@@ -439,33 +439,33 @@ function setupSim() {
 const RESULTS = [
   {
     id: 'lookup', name: 'Busca de perfil', n: 4,
-    desc: 'Leitura de perfil por identificador, 100 → 600 usuários, sem celebridades. Referência do custo base.',
-    read: 'Único cenário em que a síncrona supera a orientada a eventos: a busca por identificador é a operação mais simples do banco relacional.',
+    desc: 'Pessoas só abrindo perfis, sem postar nada. É o caso mais simples.',
+    read: 'Aqui o síncrono atende mais pedidos por segundo. Abrir um perfil é leve, então não compensa usar fila.',
     sync: { rps: [56.2, 27.1], p95: [4.0943, 3.9658], fail: [0, 0], q: null, dr: null },
     async: { rps: [36.5, 3.5], p95: [4.3495, 0.3326], fail: [0, 0], q: null, dr: null },
   },
   {
     id: 'organic', name: 'Viralização orgânica', n: 4,
-    desc: 'Usuários comuns publicam e compartilham em rampa suave; grau de saída baixo, sem celebridades.',
-    read: 'Ambas saudáveis. Com poucas gravações por evento, a síncrona absorve a carga; a orientada a eventos já paga a consistência eventual com uma fila modesta.',
+    desc: 'Pessoas comuns postando e compartilhando, sem celebridades.',
+    read: 'Os dois funcionam bem. Cada post vai para poucos feeds, então o síncrono dá conta sozinho. O com fila também vai bem, mas acumula um pouco de trabalho para depois.',
     sync: { rps: [37.0, 2.0], p95: [2.1473, 0.062], fail: [0.05, 0.06], q: [0, 0], dr: [5, 0] },
     async: { rps: [20.9, 5.7], p95: [3.584, 1.0668], fail: [0, 0], q: [301, 93], dr: [43, 21] },
   },
   {
     id: 'peak', name: 'Pico de viralização', n: 3,
-    desc: '20 celebridades (2.000 a 5.000 seguidores) disparam cascatas de até quatro gerações.',
-    read: 'A síncrona colapsa: a vazão cai e o p95 encosta no limite de 30 s. A orientada a eventos sustenta o pico sem falhas e leva 386 s para drenar a fila.',
+    desc: '20 celebridades postam e o conteúdo viraliza em ondas.',
+    read: 'O síncrono trava: atende poucos pedidos e as pessoas esperam quase 30 s. O com fila responde em ~3 s sem erros, mas leva uns 6 minutos para entregar tudo nos feeds.',
     sync: { rps: [5.2, 0.5], p95: [29.7477, 0.4376], fail: [6.84, 1.69], q: [0, 0], dr: [57, 1] },
     async: { rps: [21.4, 2.3], p95: [3.1396, 0.6115], fail: [0, 0], q: [618, 39], dr: [386, 16] },
   },
 ];
 // Domínio fixo por métrica em todos os cenários: a troca de aba mostra a inversão real.
 const METRICS = [
-  { k: 'rps', title: 'Vazão', unit: 'req/s · maior é melhor', max: 85, fmt: (v) => fmtNum(v, 1) },
-  { k: 'p95', title: 'Tempo de resposta p95', unit: 's · menor é melhor', max: 32, fmt: (v) => fmtNum(v, 1) },
-  { k: 'fail', title: 'Falhas', unit: '% · menor é melhor', max: 9, fmt: (v) => fmtNum(v, 2) },
-  { k: 'q', title: 'Pico da fila', unit: 'mensagens', max: 680, fmt: (v) => fmtInt(v) },
-  { k: 'dr', title: 'Drenagem', unit: 's após a carga', max: 420, fmt: (v) => fmtInt(v) },
+  { k: 'rps', title: 'Pedidos atendidos', unit: 'por segundo · maior é melhor', max: 85, fmt: (v) => fmtNum(v, 1) },
+  { k: 'p95', title: 'Tempo de espera', unit: 'segundos · menor é melhor', max: 32, fmt: (v) => fmtNum(v, 1) },
+  { k: 'fail', title: 'Pedidos com erro', unit: '% · menor é melhor', max: 9, fmt: (v) => fmtNum(v, 2) },
+  { k: 'q', title: 'Trabalho na fila', unit: 'no pior momento', max: 680, fmt: (v) => fmtInt(v) },
+  { k: 'dr', title: 'Tempo para terminar', unit: 'segundos após o fim dos pedidos', max: 420, fmt: (v) => fmtInt(v) },
 ];
 let resIdx = 2;
 
@@ -487,7 +487,7 @@ function setupResults() {
     const x = d3.scaleLinear().domain([0, m.max]).range([78, 250]);
     ['sync', 'async'].forEach((a, i) => {
       const g = svg.append('g').attr('class', `r-${a}`).attr('transform', `translate(0,${8 + i * 34})`);
-      g.append('text').attr('class', 'lbl').attr('x', 0).attr('y', 15).text(a === 'sync' ? 'Síncrona' : 'Eventos');
+      g.append('text').attr('class', 'lbl').attr('x', 0).attr('y', 15).text(a === 'sync' ? 'Síncrono' : 'Com fila');
       g.append('rect').attr('class', `mbar ${a}`).attr('x', x(0)).attr('y', 2).attr('height', 20).attr('width', 0).attr('rx', 2);
       g.append('line').attr('class', 'err');
       g.append('text').attr('class', 'val').attr('y', 16);

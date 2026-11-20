@@ -19,8 +19,8 @@
       <a href="#problema">Problema</a>
       <a href="#rede">Rede</a>
       <a href="#cascata">Cascata</a>
-      <a href="#arquiteturas">Arquiteturas</a>
-      <a href="#pico">Sob o pico</a>
+      <a href="#arquiteturas">Os dois sistemas</a>
+      <a href="#pico">Simulação</a>
       <a href="#resultados">Resultados</a>
     </nav>
     <div class="bar-actions">
@@ -58,11 +58,11 @@
     <section class="slide" id="problema" data-title="Problema">
       <div class="wrap narrow">
         <p class="eyebrow reveal">Problema de pesquisa</p>
-        <blockquote class="big-quote reveal">Como diferentes arquiteturas backend respondem ao estresse gerado por cascatas de informação em redes sociais?</blockquote>
+        <blockquote class="big-quote reveal">Quando um post viraliza, o servidor da rede social aguenta? E qual jeito de construir esse servidor aguenta melhor?</blockquote>
         <div class="trio reveal">
-          <div><span class="n">01</span><h3>Grafo</h3><p>Usuários são vértices; “seguir” é aresta. Poucos vértices concentram muitas conexões.</p></div>
-          <div><span class="n">02</span><h3>Cascata</h3><p>Cada compartilhamento expõe o conteúdo a novos seguidores, geração após geração.</p></div>
-          <div><span class="n">03</span><h3>Observabilidade</h3><p>Vazão, latência, falhas e filas mostram como cada arquitetura degrada.</p></div>
+          <div><span class="n">01</span><h3>Grafo</h3><p>A rede social vista como pontos (pessoas) ligados por linhas (quem segue quem). Poucas pessoas têm muitos seguidores.</p></div>
+          <div><span class="n">02</span><h3>Viralização</h3><p>Alguém compartilha, os seguidores veem e compartilham de novo. O post se espalha em ondas.</p></div>
+          <div><span class="n">03</span><h3>Medição</h3><p>Medimos quantos pedidos o servidor atende, quanto tempo demora e quantos dão erro.</p></div>
         </div>
       </div>
     </section>
@@ -71,9 +71,9 @@
     <section class="slide" id="rede" data-title="Rede">
       <div class="wrap split">
         <div class="reveal">
-          <p class="eyebrow">1 · A rede simulada</p>
-          <h2 id="net-title">Poucos vértices concentram as conexões</h2>
-          <p class="lead">Rede com <b id="net-users">10.020</b> pessoas e distribuição de seguidores em lei de potência. Metade tem até <b id="net-median">4</b> seguidores; 20 celebridades têm entre 2.150 e 5.000.</p>
+          <p class="eyebrow">1 · A rede de teste</p>
+          <h2 id="net-title">Poucas pessoas concentram os seguidores</h2>
+          <p class="lead">Criamos uma rede com <b id="net-users">10.020</b> pessoas, parecida com uma rede social de verdade. Metade das pessoas tem até <b id="net-median">4</b> seguidores. Já as 20 “celebridades” têm de 2.150 a 5.000.</p>
           <dl class="facts" id="net-facts"></dl>
         </div>
         <figure class="reveal">
@@ -87,54 +87,54 @@
     <section class="slide" id="cascata" data-title="Cascata">
       <div class="wrap split wide-right">
         <div class="reveal">
-          <p class="eyebrow">2 · A cascata de informação</p>
-          <h2>O grau do vértice de origem define o alcance</h2>
-          <p class="lead">Dispare uma publicação e acompanhe as gerações de compartilhamento. Cada seguidor alcançado é uma gravação de feed no backend.</p>
+          <p class="eyebrow">2 · Como um post se espalha</p>
+          <h2>Quem posta faz diferença</h2>
+          <p class="lead">Clique para alguém postar e veja o post se espalhar. Cada pessoa que recebe o post no feed é mais um registro que o servidor precisa salvar.</p>
           <div class="btn-row">
             <button type="button" class="btn primary" data-cascade="hub">Celebridade publica</button>
             <button type="button" class="btn ghost" data-cascade="leaf">Pessoa comum publica</button>
           </div>
           <dl class="counters">
-            <div><dt>Geração</dt><dd id="cc-gen">–</dd></div>
-            <div><dt>Alcançados</dt><dd id="cc-reach">–</dd></div>
-            <div><dt>Gravações de feed</dt><dd id="cc-writes">–</dd></div>
+            <div><dt>Onda</dt><dd id="cc-gen">–</dd></div>
+            <div><dt>Pessoas alcançadas</dt><dd id="cc-reach">–</dd></div>
+            <div><dt>Registros salvos</dt><dd id="cc-writes">–</dd></div>
           </dl>
-          <p class="note">Grafo reduzido (260 vértices) gerado por conexão preferencial, apenas ilustrativo.</p>
+          <p class="note">Rede pequena (260 pessoas), só para ilustrar.</p>
         </div>
         <figure class="graph-fig reveal">
           <svg id="cascade" viewBox="0 0 640 520" role="img" aria-label="Grafo de seguidores com animação da cascata"></svg>
           <div class="legend-inline">
-            <span><i class="lg origin"></i>origem</span><span><i class="lg share"></i>compartilhou</span><span><i class="lg seen"></i>recebeu no feed</span>
+            <span><i class="lg origin"></i>quem postou</span><span><i class="lg share"></i>compartilhou</span><span><i class="lg seen"></i>recebeu no feed</span>
           </div>
         </figure>
       </div>
     </section>
 
     <!-- 4 ─────────────────────────────── arquiteturas -->
-    <section class="slide" id="arquiteturas" data-title="Arquiteturas">
+    <section class="slide" id="arquiteturas" data-title="Os dois sistemas">
       <div class="wrap">
         <div class="head reveal">
-          <p class="eyebrow">3 · Duas composições, mesmo orçamento</p>
-          <h2>Duas formas de processar a mesma escrita</h2>
-          <p class="lead">As duas recebem o mesmo estímulo com 1,5 CPU e 3 GB no total. A diferença está no momento em que o cliente recebe a resposta e no componente que executa as gravações.</p>
+          <p class="eyebrow">3 · Os dois sistemas comparados</p>
+          <h2>Dois jeitos de salvar um post</h2>
+          <p class="lead">Os dois recebem os mesmos pedidos e usam o mesmo tamanho de computador. Muda a ordem das coisas: salvar antes de responder, ou responder antes de salvar.</p>
         </div>
         <div class="arch-grid">
           <article class="arch sync reveal">
-            <p class="tag"><i></i>Síncrona</p>
-            <h3>Grava tudo, depois responde</h3>
+            <p class="tag"><i></i>Síncrono</p>
+            <h3>Salva tudo, depois responde</h3>
             <ol class="flow">
-              <li>Cliente</li><li>Nginx</li><li>Laravel · PHP-FPM</li><li class="hot">MySQL<small>post + feed de cada seguidor</small></li>
+              <li>Cliente</li><li>Nginx</li><li>Laravel · PHP-FPM</li><li class="hot">MySQL<small>banco de dados: salva o post no feed de cada seguidor</small></li>
             </ol>
-            <p>Resposta confiável e imediata no banco, mas presa ao tamanho do fan-out.</p>
+            <p>Quando responde, está tudo salvo. Mas se o post tem muitos seguidores, a pessoa fica esperando.</p>
             <div class="budget" data-arch="sync"></div>
           </article>
           <article class="arch async reveal">
-            <p class="tag"><i></i>Orientada a eventos</p>
-            <h3>Aceita, enfileira, grava em lote</h3>
+            <p class="tag"><i></i>Com fila</p>
+            <h3>Responde na hora, salva depois</h3>
             <ol class="flow">
-              <li>Cliente</li><li>Nginx</li><li>Hyperf · Swoole</li><li class="hot">RabbitMQ<small>fila de mensagens</small></li><li class="hot">Worker → Neo4j<small>lotes de até 50</small></li>
+              <li>Cliente</li><li>Nginx</li><li>Hyperf · Swoole</li><li class="hot">RabbitMQ<small>fila: guarda o trabalho para depois</small></li><li class="hot">Worker → Neo4j<small>salva aos poucos, em lotes</small></li>
             </ol>
-            <p>Resposta rápida e desacoplada; o feed é atualizado em segundo plano.</p>
+            <p>A pessoa recebe “ok” rapidinho. O feed dos seguidores atualiza alguns segundos (ou minutos) depois.</p>
             <div class="budget" data-arch="async"></div>
           </article>
         </div>
@@ -142,12 +142,12 @@
     </section>
 
     <!-- 5 ─────────────────────────────── sob o pico -->
-    <section class="slide" id="pico" data-title="Sob o pico">
+    <section class="slide" id="pico" data-title="Simulação">
       <div class="wrap">
         <div class="head row reveal">
           <div>
-            <p class="eyebrow">4 · As duas arquiteturas sob o mesmo pico</p>
-            <h2>Comportamento sob carga crescente</h2>
+            <p class="eyebrow">4 · Simulação</p>
+            <h2>O que acontece quando o post viraliza</h2>
           </div>
           <div class="sim-controls">
             <div class="seg" role="radiogroup" aria-label="Cenário da simulação">
@@ -159,39 +159,39 @@
         </div>
         <div class="sim-grid reveal">
           <div class="lane sync">
-            <div class="lane-top"><p class="tag"><i></i>Síncrona</p><span class="status" id="st-sync">aguardando</span></div>
+            <div class="lane-top"><p class="tag"><i></i>Síncrono</p><span class="status" id="st-sync">aguardando</span></div>
             <div class="pipe">
-              <div class="stage"><span>App</span><div class="meter"><i id="m-sync-app"></i></div></div>
+              <div class="stage"><span>Servidor</span><div class="meter"><i id="m-sync-app"></i></div></div>
               <div class="arrow"></div>
-              <div class="stage"><span>MySQL</span><div class="meter"><i id="m-sync-db"></i></div></div>
+              <div class="stage"><span>Banco</span><div class="meter"><i id="m-sync-db"></i></div></div>
             </div>
             <dl class="kpis">
-              <div><dt>Resposta p95</dt><dd id="k-sync-p95">–</dd></div>
-              <div><dt>Falhas</dt><dd id="k-sync-fail">–</dd></div>
-              <div><dt>Esperando</dt><dd id="k-sync-pend">–</dd></div>
+              <div><dt>Tempo de espera</dt><dd id="k-sync-p95">–</dd></div>
+              <div><dt>Pedidos com erro</dt><dd id="k-sync-fail">–</dd></div>
+              <div><dt>Na espera</dt><dd id="k-sync-pend">–</dd></div>
             </dl>
           </div>
           <div class="lane async">
-            <div class="lane-top"><p class="tag"><i></i>Orientada a eventos</p><span class="status" id="st-async">aguardando</span></div>
+            <div class="lane-top"><p class="tag"><i></i>Com fila</p><span class="status" id="st-async">aguardando</span></div>
             <div class="pipe">
-              <div class="stage"><span>App</span><div class="meter"><i id="m-async-app"></i></div></div>
+              <div class="stage"><span>Servidor</span><div class="meter"><i id="m-async-app"></i></div></div>
               <div class="arrow"></div>
               <div class="stage"><span>Fila</span><div class="meter"><i id="m-async-q"></i></div></div>
               <div class="arrow"></div>
-              <div class="stage"><span>Neo4j</span><div class="meter"><i id="m-async-db"></i></div></div>
+              <div class="stage"><span>Banco</span><div class="meter"><i id="m-async-db"></i></div></div>
             </div>
             <dl class="kpis">
-              <div><dt>Resposta p95</dt><dd id="k-async-p95">–</dd></div>
-              <div><dt>Falhas</dt><dd id="k-async-fail">–</dd></div>
+              <div><dt>Tempo de espera</dt><dd id="k-async-p95">–</dd></div>
+              <div><dt>Pedidos com erro</dt><dd id="k-async-fail">–</dd></div>
               <div><dt>Na fila</dt><dd id="k-async-pend">–</dd></div>
             </dl>
           </div>
         </div>
         <div class="charts reveal">
-          <figure><figcaption>Tempo de resposta (p95)</figcaption><svg id="ch-resp" viewBox="0 0 560 220"></svg></figure>
-          <figure><figcaption>Trabalho pendente</figcaption><svg id="ch-pend" viewBox="0 0 560 220"></svg></figure>
+          <figure><figcaption>Quanto tempo as pessoas esperam</figcaption><svg id="ch-resp" viewBox="0 0 560 220"></svg></figure>
+          <figure><figcaption>Trabalho acumulado</figcaption><svg id="ch-pend" viewBox="0 0 560 220"></svg></figure>
         </div>
-        <p class="note reveal">Modelo de filas simplificado e ilustrativo (tempo acelerado 10×). Os valores medidos estão na próxima seção.</p>
+        <p class="note reveal">Simulação simplificada, só para ilustrar (10× mais rápida). Os números reais estão na próxima seção.</p>
       </div>
     </section>
 
@@ -200,8 +200,8 @@
       <div class="wrap">
         <div class="head row reveal">
           <div>
-            <p class="eyebrow">5 · Resultados medidos</p>
-            <h2>Desempenho por cenário</h2>
+            <p class="eyebrow">5 · Resultados reais</p>
+            <h2>O que medimos nos testes</h2>
           </div>
           <div class="seg" id="res-tabs" role="tablist" aria-label="Cenário"></div>
         </div>
@@ -213,7 +213,7 @@
           </div>
           <div class="res-charts" id="res-charts"></div>
         </div>
-        <p class="note reveal">Média ± desvio-padrão amostral por grupo. Fonte: tabela de resultados do artigo. Execuções individuais no <a href="/lab#comparacao">Laboratório</a>.</p>
+        <p class="note reveal">Valor médio dos testes (± quanto variou entre eles). Fonte: artigo do TCC. Testes individuais no <a href="/lab#comparacao">Laboratório</a>.</p>
       </div>
     </section>
 
@@ -221,18 +221,18 @@
     <section class="slide closing" id="conclusao" data-title="Conclusão">
       <div class="wrap narrow">
         <p class="eyebrow reveal">Conclusão</p>
-        <p class="big-quote reveal">A arquitetura mais adequada variou conforme a topologia da carga aplicada.</p>
+        <p class="big-quote reveal">Nenhum dos dois é melhor sempre. Depende de quem está postando.</p>
         <div class="two-col reveal">
-          <div class="pane sync"><h3>Baixa conectividade</h3><p>Leitura simples e difusão orgânica: a simplicidade e a consistência imediata do modelo síncrono bastam.</p></div>
-          <div class="pane async"><h3>Cascatas de alta centralidade</h3><p>Desacoplamento e persistência em grafo mantiveram a estabilidade, com consistência eventual do feed.</p></div>
+          <div class="pane sync"><h3>Pessoas comuns postando</h3><p>Pouca gente recebe cada post. O sistema síncrono, mais simples, dá conta.</p></div>
+          <div class="pane async"><h3>Celebridades viralizando</h3><p>Milhares recebem cada post. O sistema com fila segue funcionando, só que o feed demora um pouco para atualizar.</p></div>
         </div>
         <details class="limits reveal">
           <summary>Limitações</summary>
           <ul>
-            <li>Uma única máquina, limite de 1,5 CPU e 3.000 MiB por arquitetura.</li>
-            <li>Rede simulada de porte reduzido e rodadas curtas (40 a 66 s).</li>
-            <li>Divisão interna de CPU diferente entre as composições.</li>
-            <li>“Concluído” significa coisas diferentes: gravado (síncrona) × aceito (eventos).</li>
+            <li>Tudo rodou num único computador, com recursos limitados.</li>
+            <li>Rede pequena e testes curtos (40 a 66 segundos).</li>
+            <li>Os dois sistemas dividem o processador de jeitos diferentes.</li>
+            <li>“Pronto” não quer dizer o mesmo nos dois: no síncrono já está salvo; no com fila, só foi recebido.</li>
           </ul>
         </details>
       </div>

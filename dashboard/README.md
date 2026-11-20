@@ -1,10 +1,25 @@
 # Painel de experimentos de viralização
 
-SPA local para disparar e comparar as execuções descritas em [`code/docs/viralizacao.md`](../code/docs/viralizacao.md). Node 18+, sem dependências.
+Site local do TCC com duas partes: uma apresentação pública do trabalho e um laboratório para disparar e comparar as execuções descritas em [`code/docs/viralizacao.md`](../code/docs/viralizacao.md). Node 18+, sem dependências no servidor.
 
 ```bash
 node dashboard/server.mjs        # http://127.0.0.1:8765  (PORT=… para trocar)
 ```
+
+## Páginas
+
+| Rota | Arquivos | Para quê |
+| --- | --- | --- |
+| `/` | `public/index.html`, `site.js`, `site.css` | Apresentação do TCC em linguagem simples, rolando por seções: problema, rede de teste, propagação de um post, os dois sistemas, simulação e resultados. Botão **Apresentar** abre modo tela cheia (setas/espaço navegam, Esc sai). |
+| `/lab` | `public/lab.html`, `lab.js`, `styles.css` | Laboratório: executar testes e comparar execuções salvas. |
+
+O site usa D3 7.9.0 via CDN (cdnjs) para os gráficos. Sem internet, os gráficos não aparecem; o laboratório não depende do D3.
+
+Dados do site:
+
+- Rede: `GET /api/dataset` (manifesto do dataset); sem o servidor, usa valores fixos do artigo.
+- Propagação do post e simulação: modelos ilustrativos no navegador, com semente fixa. **Não são medições.**
+- Resultados: média ± desvio-padrão copiados da tabela de resultados de `artigo/textos.tex`. Se a tabela do artigo mudar, atualizar `RESULTS` em `public/site.js`.
 
 ## Tipos de teste (`kind`)
 
@@ -13,10 +28,9 @@ O painel dispara e compara dois tipos de experimento, informados pelo campo `kin
 - **`viral`** (padrão): publicações e compartilhamentos em cascata, que geram escrita. Mede vazão, latência, filas e consistência eventual (aceitos × persistidos).
 - **`user_lookup`** (baseline de leitura de perfil): controle que só lê. Não grava nada e verifica um contrato de latência e de formato. `contract_errors` só é medido aqui; warmup e drenagem não se aplicam.
 
-## Seções
+## Laboratório (`/lab`)
 
-- **Arquiteturas**: dataset Zipf (lido de `code/dataset/out/manifest.json`), fluxo de escrita e orçamento de 1,5 CPU / 3 GB de cada composição, mistura de tráfego e degraus.
-- **Execução**: `POST /api/run` com `{kind, arch, mode, scenario, vus, restore}` (`kind` opcional, padrão `viral`). O servidor monta os comandos conforme o tipo:
+- **Executar**: `POST /api/run` com `{kind, arch, mode, scenario, vus, restore}` (`kind` opcional, padrão `viral`). O servidor monta os comandos conforme o tipo:
 
   | Tipo | Modo | Comando equivalente |
   | --- | --- | --- |
@@ -28,7 +42,7 @@ O painel dispara e compara dois tipos de experimento, informados pelo campo `kin
   | `user_lookup` | `smoke`, sem restore | `MODE=smoke bash scripts/viral.sh baseline <arch>` |
 
   Logs via SSE em `/api/stream`; uma execução por vez (409 se ocupado); `POST /api/abort` manda SIGINT ao grupo de processos, SIGTERM após 10 s e SIGKILL após 20 s se algo restar. Fases inferidas das mensagens `[viral]` do script (baseline: `restore → load → done`; viral: `restore → warmup → load → drain → done`). Log completo de cada disparo em `dashboard/runs/` (ignorado pelo Git).
-- **Comparação**: lê `code/k6/results/` (ignora `*-warmup-*` e `suite-logs`). Artefatos por tipo:
+- **Execuções**: lê `code/k6/results/` (ignora `*-warmup-*` e `suite-logs`). Artefatos por tipo:
   - `viral-*` (inclui os cenários `organic` e `viral_peak`): `summary.json` + `contagens.json`.
   - `baseline-*` (`user_lookup`): `summary.json` + `metricas-antes.json` + `metricas.json` (estado do banco antes e depois da carga; não há `contagens.json`).
 
