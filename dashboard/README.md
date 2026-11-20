@@ -21,6 +21,16 @@ Dados do site:
 - Propagação do post e simulação: modelos ilustrativos no navegador, com semente fixa. **Não são medições.**
 - Resultados: média ± desvio-padrão copiados da tabela de resultados de `artigo/textos.tex`. Se a tabela do artigo mudar, atualizar `RESULTS` em `public/site.js`.
 
+## PDF do site
+
+`dashboard/site-tcc.pdf` é uma versão estática do site, uma página por seção. Nele, botões, abas e textos de "clique" são removidos, a propagação do post aparece como comparação celebridade × pessoa comum e a simulação mostra só os gráficos finais com explicação. Para gerar de novo, com o servidor rodando:
+
+```bash
+node --experimental-websocket dashboard/scripts/site-pdf.mjs   # [saida.pdf]; SITE_URL=… para outro endereço
+```
+
+Requer Node 20+ (WebSocket nativo) e `google-chrome` no PATH.
+
 ## Tipos de teste (`kind`)
 
 O painel dispara e compara dois tipos de experimento, informados pelo campo `kind` do payload:
