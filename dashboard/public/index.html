@@ -1,278 +1,254 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Bancada de viralização</title>
+  <title>Grafos e Observabilidade · TCC PUC Minas</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wdth,wght@75..100,400..700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,500;0,8..60,600;0,8..60,700;1,8..60,500&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="site.css">
 </head>
 <body>
-  <header class="top">
-    <div class="brand">
-      <span class="brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 28 28" width="28" height="28"><circle cx="14" cy="14" r="5"/><circle cx="4" cy="5" r="2"/><circle cx="24" cy="4" r="2"/><circle cx="25" cy="21" r="2"/><circle cx="5" cy="23" r="2"/><circle cx="14" cy="26" r="1.5"/><path d="M14 14 4 5M14 14 24 4M14 14l11 7M14 14 5 23M14 14v12"/></svg>
-      </span>
-      <div>
-        <strong>Bancada de viralização</strong>
-        <span class="brand-sub">Duas formas de construir uma rede social, testadas sob o mesmo pico de acessos</span>
-      </div>
-    </div>
-    <nav class="tabs" role="tablist" aria-label="Seções">
-      <a role="tab" href="#arquiteturas" data-tab="arquiteturas">Como funciona</a>
-      <a role="tab" href="#execucao" data-tab="execucao">Rodar um teste</a>
-      <a role="tab" href="#comparacao" data-tab="comparacao">Resultados</a>
-    </nav>
-    <a class="run-pill" id="run-pill" href="#execucao" data-state="idle">
-      <span class="dot" aria-hidden="true"></span><span id="run-pill-text">Nenhum teste rodando</span>
+  <header class="bar">
+    <a class="brand" href="#inicio">
+      <span class="brand-logo"><img src="img/brasao-icei-puc.png" alt="ICEI e PUC Minas" width="69" height="40"></span>
+      <span class="brand-text"><strong>Grafos e Observabilidade</strong><span>TCC · PUC Minas Betim</span></span>
     </a>
+    <nav class="nav" aria-label="Seções">
+      <a href="#problema">Problema</a>
+      <a href="#rede">Rede</a>
+      <a href="#cascata">Cascata</a>
+      <a href="#arquiteturas">Arquiteturas</a>
+      <a href="#pico">Sob o pico</a>
+      <a href="#resultados">Resultados</a>
+    </nav>
+    <div class="bar-actions">
+      <button type="button" class="btn ghost sm" id="btn-present" title="Tela cheia, navegue com as setas">▶ Apresentar</button>
+      <a class="btn ghost sm" href="/lab">Laboratório</a>
+    </div>
   </header>
 
-  <main>
-    <!-- ============================================================ COMO FUNCIONA -->
-    <section id="tab-arquiteturas" class="tab" role="tabpanel" hidden>
-      <div class="hero">
-        <div class="hero-copy">
-          <h1 id="hero-title">20 celebridades concentram boa parte das conexões da rede.</h1>
-          <p>
-            O teste usa uma rede social simulada com <span id="ds-users">10.020</span> pessoas. A maioria tem poucos
-            seguidores (metade tem até <span id="ds-median">4</span>), mas 20 celebridades têm entre 2.150 e 5.000.
-            Quando uma celebridade publica, o sistema precisa colocar o post no feed de milhares de pessoas de uma vez.
-            É esse pico que as duas versões do sistema enfrentam, cada uma com o mesmo limite de máquina:
-            <strong>1,5 processador e 3 GB de memória</strong>.
-          </p>
-          <dl class="ds-facts" id="ds-facts"></dl>
-          <p class="tech-note">Distribuição de seguidores em lei de potência (Zipf truncada), gerada com semente fixa para que todo teste comece da mesma rede.</p>
+  <div class="progress" aria-hidden="true"><i id="progress-bar"></i></div>
+  <ol class="dots" id="dots" aria-hidden="true"></ol>
+
+  <main id="slides">
+    <!-- 0 ─────────────────────────────── capa -->
+    <section class="slide cover" id="inicio" data-title="Início">
+      <div class="wrap cover-grid">
+        <div class="cover-copy reveal">
+          <img class="cover-logo" src="img/brasao-icei-puc.png" alt="ICEI e PUC Minas" width="207" height="120">
+          <p class="eyebrow">Trabalho de Conclusão de Curso · Sistemas de Informação · 2026</p>
+          <h1>Teoria dos Grafos e Observabilidade</h1>
+          <p class="subtitle">Análise comparativa de arquiteturas backend sob estresse de viralização</p>
+          <dl class="people">
+            <div><dt>Autores</dt><dd>Gabriel Assunção Costa<br>Matheus Henrique Resende Magalhães</dd></div>
+            <div><dt>Orientador</dt><dd>Bernardo Jeunon de Alencar</dd></div>
+          </dl>
+          <div class="cta">
+            <a class="btn primary" href="#problema">Começar ↓</a>
+            <button type="button" class="btn ghost" id="btn-present-2">▶ Modo apresentação</button>
+          </div>
         </div>
-        <figure class="zipf" aria-labelledby="zipf-cap">
-          <svg id="zipf-chart" role="img" aria-label="Seguidores de cada celebridade comparados aos usuários comuns"></svg>
-          <figcaption id="zipf-cap">Cada barra cor de mostarda é uma celebridade. A faixa azul, quase invisível na mesma escala, são os 10.000 usuários comuns.</figcaption>
+        <div class="cover-art reveal" aria-hidden="true"><svg id="cover-graph" viewBox="0 0 520 520"></svg></div>
+      </div>
+    </section>
+
+    <!-- 1 ─────────────────────────────── problema -->
+    <section class="slide" id="problema" data-title="Problema">
+      <div class="wrap narrow">
+        <p class="eyebrow reveal">Problema de pesquisa</p>
+        <blockquote class="big-quote reveal">Como diferentes arquiteturas backend respondem ao estresse gerado por cascatas de informação em redes sociais?</blockquote>
+        <div class="trio reveal">
+          <div><span class="n">01</span><h3>Grafo</h3><p>Usuários são vértices; “seguir” é aresta. Poucos vértices concentram muitas conexões.</p></div>
+          <div><span class="n">02</span><h3>Cascata</h3><p>Cada compartilhamento expõe o conteúdo a novos seguidores, geração após geração.</p></div>
+          <div><span class="n">03</span><h3>Observabilidade</h3><p>Vazão, latência, falhas e filas mostram como cada arquitetura degrada.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2 ─────────────────────────────── rede -->
+    <section class="slide" id="rede" data-title="Rede">
+      <div class="wrap split">
+        <div class="reveal">
+          <p class="eyebrow">1 · A rede simulada</p>
+          <h2 id="net-title">Poucos vértices concentram as conexões</h2>
+          <p class="lead">Rede com <b id="net-users">10.020</b> pessoas e distribuição de seguidores em lei de potência. Metade tem até <b id="net-median">4</b> seguidores; 20 celebridades têm entre 2.150 e 5.000.</p>
+          <dl class="facts" id="net-facts"></dl>
+        </div>
+        <figure class="reveal">
+          <svg id="zipf" viewBox="0 0 600 340" role="img" aria-label="Seguidores das 20 celebridades comparados aos usuários comuns"></svg>
+          <figcaption>Cada barra é uma celebridade. A faixa ao lado representa os 10.000 usuários comuns, na mesma escala.</figcaption>
         </figure>
       </div>
-
-      <h2>O que acontece quando alguém publica</h2>
-      <p class="lede">Para quem usa, as duas versões fazem a mesma coisa. A diferença está no momento em que o sistema responde “pronto” e em quem faz o trabalho pesado de entregar o post aos seguidores.</p>
-
-      <article class="lane lane-sync">
-        <header class="lane-head">
-          <h3><span class="swatch sync"></span>Versão síncrona: faz tudo antes de responder <span class="tech">Laravel + MySQL</span></h3>
-          <p>O servidor só responde depois de gravar o post e copiá-lo para o feed de cada seguidor. A resposta é confiável, mas fica lenta quando há milhares de seguidores para atender.</p>
-        </header>
-        <div class="diagram-scroll"><svg class="diagram" id="diagram-sync" viewBox="0 0 960 200" role="img" aria-label="Caminho de uma publicação na versão síncrona"></svg></div>
-        <p class="budget-title">Como o limite de máquina é dividido</p>
-        <div class="budget" id="budget-sync"></div>
-      </article>
-
-      <article class="lane lane-async">
-        <header class="lane-head">
-          <h3><span class="swatch async"></span>Versão com fila: anota o pedido e responde na hora <span class="tech">Hyperf + RabbitMQ + Neo4j</span></h3>
-          <p>O servidor coloca o pedido numa fila e responde em seguida. Um processo separado vai esvaziando a fila em lotes e grava tudo num banco de grafos. A resposta é rápida, mas o post chega aos seguidores alguns instantes depois.</p>
-        </header>
-        <div class="diagram-scroll"><svg class="diagram" id="diagram-async" viewBox="0 0 960 296" role="img" aria-label="Caminho de uma publicação na versão com fila"></svg></div>
-        <p class="budget-title">Como o limite de máquina é dividido</p>
-        <div class="budget" id="budget-async"></div>
-      </article>
-
-      <h2>O que os usuários simulados fazem</h2>
-      <p class="lede">Cada usuário simulado sorteia uma ação, espera a resposta, pausa um pouco e repete. Na situação padrão, a mistura é esta:</p>
-      <div class="mix" id="mix-mixed"></div>
-      <table class="plain scenarios">
-        <thead><tr><th>Situação simulada</th><th>O que acontece</th></tr></thead>
-        <tbody>
-          <tr><td>Uso misto do dia a dia <span class="tech">mixed</span></td><td>70% das ações são leituras (metade feed, metade “como este post se espalhou”), 25% são publicações e compartilhamentos de pessoas comuns e 5% são ações de celebridades.</td></tr>
-          <tr><td>Uso comum, sem celebridades <span class="tech">baseline</span></td><td>80% leitura do feed e 20% publicações e compartilhamentos de pessoas comuns.</td></tr>
-          <tr><td>Celebridades em ação <span class="tech">fanout</span></td><td>80% das ações são celebridades publicando ou compartilhando posts virais; 20% leitura do feed.</td></tr>
-          <tr><td>Todos olhando o viral <span class="tech">graph_read</span></td><td>90% das ações consultam como um post viral se espalhou pela rede; 10% leitura do feed.</td></tr>
-        </tbody>
-      </table>
-
-      <h2>Intensidade do teste</h2>
-      <div class="levels">
-        <div>
-          <p class="level-num">20 usuários</p>
-          <p>Carga moderada: a maior quantidade em que a versão síncrona ainda responde todas as ações de pessoas comuns em menos de 30 segundos.</p>
-        </div>
-        <div>
-          <p class="level-num">600 usuários</p>
-          <p>Pico viral: as duas versões ficam sobrecarregadas. Uma começa a demorar demais; a outra acumula pedidos na fila.</p>
-        </div>
-        <div>
-          <p class="level-num">3 minutos</p>
-          <p>Duração do teste completo: o número de usuários sobe aos poucos, fica no máximo por um minuto e meio e depois cai. O teste rápido dura 30 segundos com 50 usuários.</p>
-        </div>
-      </div>
-      <p class="tech-note">Usuários simultâneos são VUs do k6 (VUS_MAX). Rampa: metade em 30 s, máximo em 30 s, patamar de 1m30, descida de 30 s.</p>
     </section>
 
-    <!-- ============================================================ RODAR UM TESTE -->
-    <section id="tab-execucao" class="tab" role="tabpanel" hidden>
-      <div class="exec">
-        <form class="exec-form" id="run-form" autocomplete="off">
-          <h2>Novo teste</h2>
-
-          <fieldset class="seg" id="f-kind">
-            <legend>O que medir?</legend>
-            <label><input type="radio" name="kind" value="viral" checked><span class="two">Viralização<small>publicações e compartilhamentos em cascata</small></span></label>
-            <label><input type="radio" name="kind" value="user_lookup"><span class="two">Leitura de perfil (baseline)<small>controle: só leituras, contrato de latência</small></span></label>
-          </fieldset>
-
-          <fieldset class="seg" id="f-arch">
-            <legend>Qual versão testar?</legend>
-            <label><input type="radio" name="arch" value="sync" checked><span><i class="swatch sync"></i>Síncrona</span></label>
-            <label><input type="radio" name="arch" value="async"><span><i class="swatch async"></i>Com fila</span></label>
-          </fieldset>
-
-          <fieldset class="seg" id="f-mode">
-            <legend>Tipo de teste</legend>
-            <label><input type="radio" name="mode" value="smoke" checked><span class="two">Rápido, 30 s<small>confere se tudo funciona</small></span></label>
-            <label><input type="radio" name="mode" value="tcc"><span class="two">Completo, 3 min<small>gera os dados do TCC</small></span></label>
-          </fieldset>
-
-          <label class="field" id="f-scenario">
-            <span>Situação simulada</span>
-            <select name="scenario">
-              <option value="mixed">Uso misto do dia a dia (mixed)</option>
-              <option value="baseline">Uso comum, sem celebridades (baseline)</option>
-              <option value="fanout">Celebridades em ação (fanout)</option>
-              <option value="graph_read">Todos olhando o viral (graph_read)</option>
-              <option value="organic">Viralização orgânica, sem celebridades (organic)</option>
-              <option value="viral_peak">Pico de viralização em fases (viral_peak)</option>
-            </select>
-          </label>
-
-          <fieldset class="seg" id="f-vus">
-            <legend>Quantos usuários ao mesmo tempo?</legend>
-            <label><input type="radio" name="vus" value="20"><span class="two">20<small>carga moderada</small></span></label>
-            <label><input type="radio" name="vus" value="600" checked><span class="two">600<small>pico viral</small></span></label>
-          </fieldset>
-
-          <label class="check" id="f-restore">
-            <input type="checkbox" name="restore">
-            <span>Começar da rede original, desfazendo testes anteriores</span>
-          </label>
-          <p class="hint" id="f-hint-restore" hidden>O teste completo sempre volta à rede original antes de começar, para que todos partam do mesmo ponto.</p>
-          <p class="hint" id="f-hint-fixed" hidden>Este cenário tem perfil próprio: sempre começa da rede original e usa o pico de usuários definido por ele (50 no teste rápido, 300 no completo).</p>
-          <p class="hint" id="f-hint-baseline" hidden>Teste de controle: só leituras de perfil, sem gravar nada. O rápido sobe a 80 usuários em ~40 s; o completo passa por 100, 400 e 600 em ~5 min.</p>
-
-          <details class="cmd-preview">
-            <summary>Comando técnico</summary>
-            <code id="cmd-preview"></code>
-          </details>
-
-          <div class="exec-actions">
-            <button type="submit" class="btn primary" id="btn-run">Iniciar teste</button>
-            <button type="button" class="btn danger" id="btn-abort" hidden>Parar teste</button>
+    <!-- 3 ─────────────────────────────── cascata -->
+    <section class="slide" id="cascata" data-title="Cascata">
+      <div class="wrap split wide-right">
+        <div class="reveal">
+          <p class="eyebrow">2 · A cascata de informação</p>
+          <h2>O grau do vértice de origem define o alcance</h2>
+          <p class="lead">Dispare uma publicação e acompanhe as gerações de compartilhamento. Cada seguidor alcançado é uma gravação de feed no backend.</p>
+          <div class="btn-row">
+            <button type="button" class="btn primary" data-cascade="hub">Celebridade publica</button>
+            <button type="button" class="btn ghost" data-cascade="leaf">Pessoa comum publica</button>
           </div>
-          <p class="form-error" id="form-error" role="alert" hidden></p>
-          <p class="hint">Teste uma versão por vez: as duas dividem o mesmo computador e uma atrapalharia a medição da outra.</p>
-        </form>
+          <dl class="counters">
+            <div><dt>Geração</dt><dd id="cc-gen">–</dd></div>
+            <div><dt>Alcançados</dt><dd id="cc-reach">–</dd></div>
+            <div><dt>Gravações de feed</dt><dd id="cc-writes">–</dd></div>
+          </dl>
+          <p class="note">Grafo reduzido (260 vértices) gerado por conexão preferencial, apenas ilustrativo.</p>
+        </div>
+        <figure class="graph-fig reveal">
+          <svg id="cascade" viewBox="0 0 640 520" role="img" aria-label="Grafo de seguidores com animação da cascata"></svg>
+          <div class="legend-inline">
+            <span><i class="lg origin"></i>origem</span><span><i class="lg share"></i>compartilhou</span><span><i class="lg seen"></i>recebeu no feed</span>
+          </div>
+        </figure>
+      </div>
+    </section>
 
-        <div class="exec-live">
-          <div class="now" id="now" data-state="idle">
-            <p class="now-label" id="now-label">Pronto para começar</p>
-            <p class="now-title" id="now-title">Escolha a versão e o tipo de teste ao lado.</p>
-            <p class="now-desc" id="now-desc">As etapas abaixo acendem conforme o teste avança.</p>
-            <p class="now-meta" id="run-meta"></p>
-          </div>
-          <ol class="phases" id="phases">
-            <li data-phase="restore"><span class="ph-mark"></span><span class="ph-name">Preparando o banco de dados inicial</span><span class="ph-time"></span></li>
-            <li data-phase="warmup"><span class="ph-mark"></span><span class="ph-name">Aquecendo o sistema</span><span class="ph-time"></span></li>
-            <li data-phase="load"><span class="ph-mark"></span><span class="ph-name">Simulando usuários ao mesmo tempo</span><span class="ph-time"></span></li>
-            <li data-phase="drain"><span class="ph-mark"></span><span class="ph-name">Esperando a fila esvaziar</span><span class="ph-time"></span></li>
-            <li data-phase="done"><span class="ph-mark"></span><span class="ph-name">Resultado salvo</span><span class="ph-time"></span></li>
-          </ol>
-          <div class="console-wrap">
-            <div class="console-bar">
-              <span id="console-title">Registro técnico do terminal</span>
-              <label class="check small"><input type="checkbox" id="opt-progress" checked><span>Resumir linhas de progresso</span></label>
-              <label class="check small"><input type="checkbox" id="opt-follow" checked><span>Rolar automaticamente</span></label>
-            </div>
-            <pre class="console" id="console" aria-live="off" tabindex="0"><span class="muted">As mensagens do teste aparecem aqui assim que ele começar.</span></pre>
-          </div>
+    <!-- 4 ─────────────────────────────── arquiteturas -->
+    <section class="slide" id="arquiteturas" data-title="Arquiteturas">
+      <div class="wrap">
+        <div class="head reveal">
+          <p class="eyebrow">3 · Duas composições, mesmo orçamento</p>
+          <h2>Duas formas de processar a mesma escrita</h2>
+          <p class="lead">As duas recebem o mesmo estímulo com 1,5 CPU e 3 GB no total. A diferença está no momento em que o cliente recebe a resposta e no componente que executa as gravações.</p>
+        </div>
+        <div class="arch-grid">
+          <article class="arch sync reveal">
+            <p class="tag"><i></i>Síncrona</p>
+            <h3>Grava tudo, depois responde</h3>
+            <ol class="flow">
+              <li>Cliente</li><li>Nginx</li><li>Laravel · PHP-FPM</li><li class="hot">MySQL<small>post + feed de cada seguidor</small></li>
+            </ol>
+            <p>Resposta confiável e imediata no banco, mas presa ao tamanho do fan-out.</p>
+            <div class="budget" data-arch="sync"></div>
+          </article>
+          <article class="arch async reveal">
+            <p class="tag"><i></i>Orientada a eventos</p>
+            <h3>Aceita, enfileira, grava em lote</h3>
+            <ol class="flow">
+              <li>Cliente</li><li>Nginx</li><li>Hyperf · Swoole</li><li class="hot">RabbitMQ<small>fila de mensagens</small></li><li class="hot">Worker → Neo4j<small>lotes de até 50</small></li>
+            </ol>
+            <p>Resposta rápida e desacoplada; o feed é atualizado em segundo plano.</p>
+            <div class="budget" data-arch="async"></div>
+          </article>
         </div>
       </div>
     </section>
 
-    <!-- ============================================================ RESULTADOS -->
-    <section id="tab-comparacao" class="tab" role="tabpanel" hidden>
-      <div class="cmp-head">
-        <div>
-          <h2>Testes já realizados</h2>
-          <p class="lede">Marque dois ou mais testes para comparar lado a lado.</p>
-        </div>
-        <div class="filters" id="filters">
-          <select data-filter="kind" aria-label="Filtrar teste"><option value="">Todos os testes</option><option value="viral">Viralização</option><option value="user_lookup">Leitura de perfil</option></select>
-          <select data-filter="arch" aria-label="Filtrar versão"><option value="">Todas as versões</option><option value="sync">Síncrona</option><option value="async">Com fila</option></select>
-          <select data-filter="mode" aria-label="Filtrar tipo"><option value="">Todos os tipos</option><option value="tcc">Completo</option><option value="smoke">Rápido</option></select>
-          <select data-filter="scenario" aria-label="Filtrar situação"><option value="">Todas as situações</option><option value="mixed">Uso misto</option><option value="baseline">Uso comum</option><option value="fanout">Celebridades em ação</option><option value="graph_read">Olhando o viral</option><option value="organic">Viralização orgânica</option><option value="viral_peak">Pico de viralização</option></select>
-          <select data-filter="vus" aria-label="Filtrar intensidade"><option value="">Qualquer intensidade</option></select>
-          <button type="button" class="btn ghost" id="btn-reload">Atualizar lista</button>
-          <button type="button" class="btn ghost" id="btn-clear-sel">Limpar seleção</button>
-        </div>
-      </div>
-      <div class="runs-scroll">
-        <table class="runs" id="runs-table">
-          <thead><tr>
-            <th class="c-check"><span class="sr">Selecionar</span></th>
-            <th>Teste</th><th>Versão</th><th>Tipo</th><th>Situação</th>
-            <th class="num">Usuários</th><th>Quando</th>
-            <th class="num" title="vazão, req/s">Pedidos por segundo</th>
-            <th class="num" title="taxa de falha HTTP">Falhas</th>
-            <th class="num" title="p95">Resposta de 95%</th>
-            <th class="num" title="drenagem">Fila esvaziou em</th>
-          </tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <p class="hint" id="runs-hint"></p>
-
-      <div id="cmp-body" hidden>
-        <div class="cmp-toolbar">
-          <div class="legend" id="legend"></div>
-          <div class="export">
-            <button type="button" class="btn ghost" id="btn-md">Copiar tabela (Markdown)</button>
-            <button type="button" class="btn ghost" id="btn-csv">Baixar planilha (CSV)</button>
-            <span class="toast" id="toast" role="status"></span>
+    <!-- 5 ─────────────────────────────── sob o pico -->
+    <section class="slide" id="pico" data-title="Sob o pico">
+      <div class="wrap">
+        <div class="head row reveal">
+          <div>
+            <p class="eyebrow">4 · As duas arquiteturas sob o mesmo pico</p>
+            <h2>Comportamento sob carga crescente</h2>
+          </div>
+          <div class="sim-controls">
+            <div class="seg" role="radiogroup" aria-label="Cenário da simulação">
+              <button type="button" data-scn="organic" aria-pressed="false">Orgânico</button>
+              <button type="button" data-scn="peak" aria-pressed="true">Pico viral</button>
+            </div>
+            <button type="button" class="btn primary" id="sim-play">▶ Simular</button>
           </div>
         </div>
-
-        <p class="hint" id="cmp-context"></p>
-        <div class="cards" id="cards"></div>
-        <p class="footnote" id="cmp-footnote">Pedidos por segundo e falhas contam só as ações dos usuários simulados. Os tempos de resposta gerais incluem também uma verificação da fila feita uma vez por segundo, que só existe na versão com fila. Quando sobrecarregada, a versão com fila responde com erro após 10 s de espera no banco; a síncrona deixa o pedido esperar até o teste desistir, aos 30 s.</p>
-
-        <div class="chart-block">
-          <div class="chart-head">
-            <div>
-              <h3>Quanto cada ação demorou</h3>
-              <p class="hint">Barras menores são melhores. A linha vermelha marca os 30 s em que o teste desiste de esperar.</p>
+        <div class="sim-grid reveal">
+          <div class="lane sync">
+            <div class="lane-top"><p class="tag"><i></i>Síncrona</p><span class="status" id="st-sync">aguardando</span></div>
+            <div class="pipe">
+              <div class="stage"><span>App</span><div class="meter"><i id="m-sync-app"></i></div></div>
+              <div class="arrow"></div>
+              <div class="stage"><span>MySQL</span><div class="meter"><i id="m-sync-db"></i></div></div>
             </div>
-            <div class="seg compact" id="lat-metric">
-              <label title="p50"><input type="radio" name="latm" value="p50"><span>Típico</span></label>
-              <label title="p95"><input type="radio" name="latm" value="p95" checked><span>95% dos casos</span></label>
-              <label title="p99"><input type="radio" name="latm" value="p99"><span>Casos mais lentos</span></label>
-            </div>
+            <dl class="kpis">
+              <div><dt>Resposta p95</dt><dd id="k-sync-p95">–</dd></div>
+              <div><dt>Falhas</dt><dd id="k-sync-fail">–</dd></div>
+              <div><dt>Esperando</dt><dd id="k-sync-pend">–</dd></div>
+            </dl>
           </div>
-          <div id="chart-latency" class="chart"></div>
-        </div>
-        <div class="chart-block">
-          <div class="chart-head">
-            <div>
-              <h3>Quantas vezes cada ação falhou</h3>
-              <p class="hint">Porcentagem das tentativas que deram erro ou demoraram mais de 30 s.</p>
+          <div class="lane async">
+            <div class="lane-top"><p class="tag"><i></i>Orientada a eventos</p><span class="status" id="st-async">aguardando</span></div>
+            <div class="pipe">
+              <div class="stage"><span>App</span><div class="meter"><i id="m-async-app"></i></div></div>
+              <div class="arrow"></div>
+              <div class="stage"><span>Fila</span><div class="meter"><i id="m-async-q"></i></div></div>
+              <div class="arrow"></div>
+              <div class="stage"><span>Neo4j</span><div class="meter"><i id="m-async-db"></i></div></div>
             </div>
+            <dl class="kpis">
+              <div><dt>Resposta p95</dt><dd id="k-async-p95">–</dd></div>
+              <div><dt>Falhas</dt><dd id="k-async-fail">–</dd></div>
+              <div><dt>Na fila</dt><dd id="k-async-pend">–</dd></div>
+            </dl>
           </div>
-          <div id="chart-fail" class="chart"></div>
         </div>
-
-        <h3 id="audit-title">Prometido × gravado <span class="tech">consistência eventual</span></h3>
-        <p class="lede" id="audit-lede">Quando o sistema responde “ok”, o pedido foi aceito. Na versão com fila, porém, a gravação acontece depois. A tabela compara quantos pedidos foram aceitos com quantos de fato apareceram no banco de dados: no momento em que os usuários pararam e depois que a fila terminou de esvaziar.</p>
-        <div class="runs-scroll"><table class="audit" id="audit"></table></div>
+        <div class="charts reveal">
+          <figure><figcaption>Tempo de resposta (p95)</figcaption><svg id="ch-resp" viewBox="0 0 560 220"></svg></figure>
+          <figure><figcaption>Trabalho pendente</figcaption><svg id="ch-pend" viewBox="0 0 560 220"></svg></figure>
+        </div>
+        <p class="note reveal">Modelo de filas simplificado e ilustrativo (tempo acelerado 10×). Os valores medidos estão na próxima seção.</p>
       </div>
+    </section>
+
+    <!-- 6 ─────────────────────────────── resultados -->
+    <section class="slide" id="resultados" data-title="Resultados">
+      <div class="wrap">
+        <div class="head row reveal">
+          <div>
+            <p class="eyebrow">5 · Resultados medidos</p>
+            <h2>Desempenho por cenário</h2>
+          </div>
+          <div class="seg" id="res-tabs" role="tablist" aria-label="Cenário"></div>
+        </div>
+        <div class="res-body reveal">
+          <div class="res-text">
+            <p class="res-desc" id="res-desc"></p>
+            <p class="res-read" id="res-read"></p>
+            <p class="note" id="res-n"></p>
+          </div>
+          <div class="res-charts" id="res-charts"></div>
+        </div>
+        <p class="note reveal">Média ± desvio-padrão amostral por grupo. Fonte: tabela de resultados do artigo. Execuções individuais no <a href="/lab#comparacao">Laboratório</a>.</p>
+      </div>
+    </section>
+
+    <!-- 7 ─────────────────────────────── conclusão -->
+    <section class="slide closing" id="conclusao" data-title="Conclusão">
+      <div class="wrap narrow">
+        <p class="eyebrow reveal">Conclusão</p>
+        <p class="big-quote reveal">A arquitetura mais adequada variou conforme a topologia da carga aplicada.</p>
+        <div class="two-col reveal">
+          <div class="pane sync"><h3>Baixa conectividade</h3><p>Leitura simples e difusão orgânica: a simplicidade e a consistência imediata do modelo síncrono bastam.</p></div>
+          <div class="pane async"><h3>Cascatas de alta centralidade</h3><p>Desacoplamento e persistência em grafo mantiveram a estabilidade, com consistência eventual do feed.</p></div>
+        </div>
+        <details class="limits reveal">
+          <summary>Limitações</summary>
+          <ul>
+            <li>Uma única máquina, limite de 1,5 CPU e 3.000 MiB por arquitetura.</li>
+            <li>Rede simulada de porte reduzido e rodadas curtas (40 a 66 s).</li>
+            <li>Divisão interna de CPU diferente entre as composições.</li>
+            <li>“Concluído” significa coisas diferentes: gravado (síncrona) × aceito (eventos).</li>
+          </ul>
+        </details>
+      </div>
+      <footer class="foot">
+        <img src="img/brasao-icei-puc.png" alt="" width="62" height="36">
+        <span>Pontifícia Universidade Católica de Minas Gerais · Instituto de Ciências Exatas e Informática · Betim, 2026</span>
+      </footer>
     </section>
   </main>
 
-  <script src="app.js" type="module"></script>
+  <div class="present-hud" id="hud" hidden>
+    <span id="hud-count"></span>
+    <span class="hud-keys">← → navegar · Esc sair</span>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+  <script src="site.js" type="module"></script>
 </body>
 </html>

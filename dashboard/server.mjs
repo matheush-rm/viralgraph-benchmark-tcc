@@ -280,7 +280,7 @@ function abortRun() {
 
 // ---------------------------------------------------------------- HTTP
 
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json' };
 
 function send(res, status, body, type = 'application/json') {
   res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store' });
@@ -342,7 +342,7 @@ const server = http.createServer(async (req, res) => {
       return abortRun() ? send(res, 202, snapshot()) : send(res, 409, { error: 'Nenhum experimento em execução.' });
     }
     if (req.method === 'GET') {
-      const file = path.normalize(path.join(PUBLIC, p === '/' ? 'index.html' : p));
+      const file = path.normalize(path.join(PUBLIC, p === '/' ? 'index.html' : p === '/lab' ? 'lab.html' : p));
       if (!file.startsWith(PUBLIC)) return send(res, 403, { error: 'proibido' });
       try { return send(res, 200, await fs.readFile(file), MIME[path.extname(file)] ?? 'application/octet-stream'); }
       catch { return send(res, 404, { error: 'não encontrado' }); }

@@ -42,10 +42,10 @@ const fmtDate = (iso) => new Date(iso).toLocaleString('pt-BR', { day: '2-digit',
 const fmtDateShort = (iso) => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
 // Vocabulário: nome acessível primeiro, termo técnico como apoio.
-const ARCH = { sync: 'Síncrona', async: 'Com fila' };
+const ARCH = { sync: 'Síncrona', async: 'Orientada a eventos' };
 const MODE = { smoke: 'rápido', tcc: 'completo' };
-const KIND = { viral: 'viralização', user_lookup: 'leitura de perfil' };
-const SCEN = { mixed: 'uso misto', baseline: 'uso comum', fanout: 'celebridades em ação', graph_read: 'olhando o viral', organic: 'viralização orgânica', viral_peak: 'pico de viralização' };
+const KIND = { viral: 'viralização', user_lookup: 'busca de perfil' };
+const SCEN = { mixed: 'uso misto', baseline: 'uso comum', fanout: 'celebridades em ação', graph_read: 'leitura do viral', organic: 'viralização orgânica', viral_peak: 'pico de viralização' };
 const ROUTES = [
   ['feed', 'Ler o feed'],
   ['propagation_tree', 'Ver como um post se espalhou'],
@@ -53,7 +53,7 @@ const ROUTES = [
   ['share', 'Pessoa comum compartilha'],
   ['celebrity_post', 'Celebridade publica'],
   ['celebrity_share', 'Celebridade compartilha'],
-  ['user_lookup', 'Leitura de perfil (baseline)'],
+  ['user_lookup', 'Busca de perfil'],
 ];
 // organic e viral_peak têm pico fixo (50 smoke / 300 tcc); o baseline de leitura sobe a
 // 80 (smoke) ou 100→400→600 (tcc). Os demais cenários: 50 no smoke, VUS_MAX no tcc.
@@ -67,146 +67,20 @@ async function api(path, opts) {
 }
 
 // ---------------------------------------------------------------- abas
-const TABS = ['arquiteturas', 'execucao', 'comparacao'];
+const TABS = ['execucao', 'comparacao'];
 function showTab() {
-  const tab = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'arquiteturas';
+  const tab = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'execucao';
   for (const t of TABS) {
     $(`#tab-${t}`).hidden = t !== tab;
-    $(`.tabs a[data-tab="${t}"]`).setAttribute('aria-selected', String(t === tab));
+    $(`.tabs a[data-tab="${t}"]`)?.setAttribute('aria-selected', String(t === tab));
   }
   // A aba de execução ocupa exatamente a janela; só o terminal rola.
   document.body.classList.toggle('fit', tab === 'execucao');
   if (tab === 'execucao') scrollConsole();
   if (tab === 'comparacao') renderCompare();
+  window.scrollTo(0, 0);
 }
 window.addEventListener('hashchange', showTab);
-
-// ================================================================ COMO FUNCIONA
-
-async function renderOverview() {
-  let ds = null;
-  try { ds = await api('/api/dataset'); } catch { /* dataset ainda não gerado */ }
-  const celebs = ds?.distribution?.celebrity_followers ?? [5000, 3500, 3000, 2750, 2600, 2500, 2428, 2375, 2333, 2300, 2272, 2250, 2230, 2214, 2200, 2187, 2176, 2166, 2157, 2150];
-  const common = ds?.distribution?.common_followers ?? { min: 1, max: 30, mean: 7.553, median: 4 };
-  const c = ds?.counts;
-  const celebSum = celebs.reduce((a, b) => a + b, 0);
-  if (c?.relacoes_seguir) $('#hero-title').textContent = `20 celebridades concentram ${fmtNum((celebSum / c.relacoes_seguir) * 100, 0)}% das conexões da rede.`;
-  if (c?.usuarios) $('#ds-users').textContent = fmtInt(c.usuarios);
-  $('#ds-median').textContent = fmtNum(common.median, 0);
-  const facts = c
-    ? [['pessoas', c.usuarios], ['conexões “segue”', c.relacoes_seguir], ['posts', c.posts_criados], ['compartilhamentos', c.compartilhamentos], ['posts já entregues nos feeds', c.entradas_feed], ['posts virais', ds.distribution.viral_posts]]
-    : [];
-  $('#ds-facts').replaceChildren(...facts.map(([k, v]) => h('div', {}, h('dt', { text: k }), h('dd', { text: fmtInt(v) }))));
-  if (!c) $('#ds-facts').append(h('div', {}, h('dt', { text: 'Gere a rede simulada (scripts/viral.sh dataset) para ver os números.' })));
-  drawZipf(celebs, common);
-  drawDiagrams();
-  drawBudgets();
-  drawMix();
-}
-
-function drawZipf(celebs, common) {
-  const svg = $('#zipf-chart');
-  const W = 620, H = 300, L = 44, B = 28, T = 16;
-  const tailW = 130, barsW = W - L - tailW - 24;
-  const max = 5000;
-  const y = (v) => T + (H - T - B) * (1 - v / max);
-  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-  svg.replaceChildren();
-  for (const t of [0, 2500, 5000]) {
-    svg.append(h('line', { class: 'axis', x1: L, x2: W, y1: y(t), y2: y(t) }));
-    svg.append(h('text', { x: L - 8, y: y(t) + 4, 'text-anchor': 'end', text: fmtInt(t) }));
-  }
-  const bw = barsW / celebs.length;
-  celebs.forEach((v, i) => {
-    const x = L + i * bw + 2;
-    svg.append(h('rect', { class: 'bar-celeb', x, y: y(v), width: bw - 4, height: y(0) - y(v), rx: 1.5 }, h('title', { text: `${i + 1}ª maior celebridade: ${fmtInt(v)} seguidores` })));
-    if (i === 0 || i === celebs.length - 1) svg.append(h('text', { class: 'val', x: x + (bw - 4) / 2, y: y(v) - 6, 'text-anchor': 'middle', text: fmtInt(v) }));
-  });
-  svg.append(h('text', { x: L + 2, y: H - 8, text: 'maior celebridade' }));
-  svg.append(h('text', { x: L + barsW - 2, y: H - 8, 'text-anchor': 'end', text: '20ª' }));
-  // Cauda: 10.000 comuns. Na mesma escala, o máximo (30) mal aparece.
-  const tx = L + barsW + 24;
-  const hMax = Math.max(1.5, y(0) - y(common.max));
-  svg.append(h('rect', { class: 'bar-common', x: tx, y: y(0) - hMax, width: tailW, height: hMax }, h('title', { text: `10.000 usuários comuns: de ${common.min} a ${common.max} seguidores` })));
-  svg.append(h('text', { class: 'tail', x: tx, y: y(0) - 44, text: '10.000 pessoas comuns' }));
-  svg.append(h('text', { x: tx, y: y(0) - 28, text: `metade tem até ${fmtNum(common.median, 0)} seguidores` }));
-  svg.append(h('text', { x: tx, y: y(0) - 12, text: `ninguém passa de ${common.max}` }));
-}
-
-function node(x, y, w, title, sub, res, key) {
-  return h('g', { class: `node${key ? ' key' : ''}` },
-    h('rect', { x, y, width: w, height: 72, rx: 6 }),
-    h('text', { class: 'n-title', x: x + 12, y: y + 24, text: title }),
-    sub ? h('text', { class: 'n-sub', x: x + 12, y: y + 42, text: sub }) : null,
-    res ? h('text', { class: 'n-res', x: x + 12, y: y + 60, text: res }) : null);
-}
-const edge = (d, cls = '') => h('path', { class: `edge ${cls}`, d, 'marker-end': 'url(#arrow)' });
-const label = (x, y, text, cls = '', anchor = 'middle') => h('text', { class: `e-label ${cls}`, x, y, 'text-anchor': anchor, text });
-const markerDefs = () => h('defs', {}, h('marker', { id: 'arrow', viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' }, h('path', { d: 'M0 0 10 5 0 10z' })));
-
-function drawDiagrams() {
-  const s = $('#diagram-sync');
-  s.replaceChildren(markerDefs(),
-    node(10, 40, 152, 'Usuários simulados', 'k6, até 600 juntos', 'pedem e esperam'),
-    node(180, 40, 154, 'Porta de entrada', 'nginx', 'divide entre 2 servidores'),
-    node(360, 40, 200, 'Aplicação (2 cópias)', 'Laravel, PHP-FPM', 'processa um pedido por vez', true),
-    node(640, 40, 310, 'Banco de dados', 'MySQL', 'grava o post e o feed de cada seguidor', true),
-    edge('M162 76H178'), edge('M334 76H358'), edge('M560 76H638'),
-    label(600, 64, 'grava tudo'),
-    edge('M795 112V160H75V114', 'ret'),
-    label(432, 152, 'Só responde “publicado” depois que todos os feeds foram gravados', 'strong'),
-    label(432, 180, 'Uma celebridade com 5.000 seguidores significa 5.000 gravações antes da resposta'),
-  );
-  const a = $('#diagram-async');
-  a.replaceChildren(markerDefs(),
-    node(10, 56, 152, 'Usuários simulados', 'k6, até 600 juntos', 'pedem e esperam'),
-    node(180, 56, 154, 'Porta de entrada', 'nginx', 'divide entre 2 servidores'),
-    node(360, 56, 200, 'Aplicação (2 cópias)', 'Hyperf, Swoole', 'muitos pedidos em paralelo', true),
-    node(640, 56, 310, 'Fila de pedidos', 'RabbitMQ', 'guarda o pedido até alguém processar', true),
-    node(640, 180, 310, 'Processador da fila', 'worker Hyperf', 'pega até 50 pedidos e grava em lote', true),
-    node(360, 180, 200, 'Banco de grafos', 'Neo4j', 'pessoas e posts ligados em rede', true),
-    edge('M162 92H178'), edge('M334 92H358'), edge('M560 92H638'),
-    label(600, 80, 'anota'),
-    edge('M795 128V178'), label(805, 158, 'retira da fila', '', 'start'),
-    edge('M640 216H562'), label(600, 206, 'grava'),
-    edge('M460 128V178', 'read'), label(452, 158, 'leituras vão direto ao banco', '', 'end'),
-    edge('M795 56V24H75V54', 'ret'),
-    label(432, 18, 'Responde “recebido” assim que o pedido entra na fila; a entrega aos feeds vem depois', 'strong'),
-    label(10, 284, 'Se o mesmo compartilhamento chegar duas vezes enquanto ainda está na fila, o processador descarta a repetição.', '', 'start'),
-  );
-}
-
-function drawBudgets() {
-  const parts = {
-    sync: [['entrada', 0.1, 64], ['aplicação', 0.4, 640], ['banco MySQL', 1.0, 2296, true]],
-    async: [['entrada', 0.1, 64], ['aplicação', 0.4, 640], ['processador', 0.3, 384], ['fila', 0.2, 512], ['banco Neo4j', 0.5, 1400, true]],
-  };
-  for (const [arch, list] of Object.entries(parts)) {
-    const row = (name, idx, total, unit, fmt) => h('div', { class: 'budget-row' },
-      h('span', { text: name }),
-      h('div', { class: 'budget-bar', role: 'img', 'aria-label': `${name}: ${list.map((p) => `${p[0]} ${fmt(p[idx])}`).join(', ')}` },
-        list.map((p) => h('span', { class: p[3] ? 'store' : '', style: `flex:${p[idx]} 1 0`, title: `${p[0]}: ${fmt(p[idx])}`, text: p[idx] / total < 0.06 ? '' : `${p[0]} ${fmt(p[idx])}` }))),
-      h('span', { text: `${fmt(total)} ${unit}`.trim() }));
-    $(`#budget-${arch}`).replaceChildren(
-      row('Processador', 1, 1.5, 'CPU', (v) => fmtNum(v, 1)),
-      row('Memória', 2, 3000, '', (v) => (v >= 1000 ? `${fmtNum(v / 1000, 1)} GB` : `${v} MB`)),
-    );
-  }
-}
-
-function drawMix() {
-  const parts = [
-    ['read', 35, 'Ler o feed', 'GET /feed/:id'],
-    ['read', 35, 'Ver como um post se espalhou', 'GET /posts/:id/propagation-tree'],
-    ['write', 12.5, 'Publicar', 'POST /posts de pessoa comum'],
-    ['write', 12.5, 'Compartilhar', 'POST /posts/:id/share de pessoa comum'],
-    ['celeb', 5, '', 'celebridade publica (2,5%) ou compartilha (2,5%)'],
-  ];
-  $('#mix-mixed').replaceChildren(...parts.map(([cls, pct, name, desc]) =>
-    h('div', { class: cls, style: `flex:${pct} 1 0`, title: `${fmtNum(pct, pct % 1 ? 1 : 0)}%: ${desc}` },
-      h('strong', { text: `${fmtNum(pct, pct % 1 ? 1 : 0)}%` }), name ? h('span', { text: name }) : null)));
-  $('#mix-mixed').after(h('p', { class: 'mix-legend', text: 'Azul: leituras. Cinza: publicações e compartilhamentos de pessoas comuns. Mostarda: celebridades (5%), a fatia pequena que gera o maior volume de gravações.' }));
-}
 
 // ================================================================ RODAR UM TESTE
 
@@ -293,32 +167,32 @@ const STATUS_TEXT = { running: 'Em andamento', success: 'Concluído', thresholds
 const PHASE_INFO = {
   queued: { title: 'Iniciando o teste', desc: () => 'Preparando os comandos.', tech: 'make' },
   restore: {
-    title: 'Preparando o banco de dados inicial',
-    desc: () => 'Apagando o que testes anteriores gravaram e restaurando a cópia limpa da rede social. Em seguida os serviços são ligados e conferidos, um por um.',
+    title: 'Restaurando o banco',
+    desc: () => 'Volta à cópia limpa da rede e sobe os serviços.',
     tech: 'restauração do snapshot + docker compose up',
   },
   warmup: {
-    title: 'Aquecendo o sistema',
-    desc: () => 'Algumas leituras para o sistema carregar o que usa com frequência. Este trecho não entra nos resultados.',
+    title: 'Aquecendo',
+    desc: () => 'Leituras iniciais, fora das medições.',
     tech: 'warmup do k6, só leituras',
   },
   load: {
-    title: 'Simulando usuários acessando ao mesmo tempo',
+    title: 'Aplicando carga',
     desc: (p) => (p.kind === 'user_lookup'
-      ? `${p.mode === 'tcc' ? 'De 100 até 600' : '80'} usuários virtuais consultam perfis sem parar. Cada resposta é cronometrada e conferida contra o formato prometido.`
-      : `Até ${p.mode === 'tcc' ? fmtInt(p.vus ?? 300) : 50} usuários virtuais leem feeds, publicam e compartilham sem parar. Cada resposta é cronometrada.`),
+      ? `${p.mode === 'tcc' ? '100 → 600' : '80'} usuários virtuais consultando perfis.`
+      : `Até ${p.mode === 'tcc' ? fmtInt(p.vus ?? 300) : 50} usuários virtuais lendo, publicando e compartilhando.`),
     tech: 'carga k6',
   },
   drain: {
-    title: 'Aguardando o sistema terminar o que ficou na fila',
+    title: 'Drenando',
     desc: (p) => (p.arch === 'async'
-      ? 'Os usuários pararam, mas ainda há pedidos na fila. O painel conta o que já foi gravado e mede quanto tempo o sistema leva para concluir o restante.'
-      : 'Os usuários pararam. O painel conta o que foi gravado e espera os números ficarem estáveis, porque pedidos abandonados ainda podem terminar de gravar.'),
+      ? 'Carga encerrada; medindo o tempo para esvaziar a fila.'
+      : 'Carga encerrada; aguardando as contagens estabilizarem.'),
     tech: 'drenagem + contagens.json',
   },
   done: {
     title: 'Resultado salvo',
-    desc: () => 'Os números já aparecem na aba Resultados.',
+    desc: () => 'Disponível em Execuções.',
     tech: (p) => (p.kind === 'user_lookup' ? 'summary.json + metricas.json' : 'summary.json + contagens.json'),
   },
 };
@@ -362,27 +236,27 @@ function renderRun() {
   const pill = $('#run-pill');
   pill.dataset.state = run.status;
   $('#run-pill-text').textContent = run.status === 'idle' ? 'Nenhum teste rodando'
-    : active ? `Rodando (${ARCH[p.arch].toLowerCase()}): etapa ${Math.max(1, visible.indexOf(run.phase) + 1)} de ${visible.length}` : `Último teste: ${STATUS_TEXT[run.status]?.toLowerCase()}`;
+    : active ? `${ARCH[p.arch]}: etapa ${Math.max(1, visible.indexOf(run.phase) + 1)} de ${visible.length}` : `Último teste: ${STATUS_TEXT[run.status]?.toLowerCase()}`;
 
   // Painel "agora"
   const now = $('#now');
   now.dataset.state = run.status;
-  let lab = 'Pronto para começar', title = 'Escolha a versão e o tipo de teste ao lado.', desc = 'As etapas abaixo acendem conforme o teste avança.', techTxt = null;
+  let lab = 'Pronto para começar', title = 'Escolha a configuração ao lado.', desc = '', techTxt = null;
   if (run.status !== 'idle') {
     lab = p.kind === 'user_lookup'
-      ? `${STATUS_TEXT[run.status]}: versão ${ARCH[p.arch].toLowerCase()}, leitura de perfil, teste ${MODE[p.mode]}`
-      : `${STATUS_TEXT[run.status]}: versão ${ARCH[p.arch].toLowerCase()}, teste ${MODE[p.mode]}, ${SCEN[p.scenario]}${p.mode === 'tcc' && p.vus ? `, ${fmtInt(p.vus)} usuários` : ''}`;
+      ? `${STATUS_TEXT[run.status]} · ${ARCH[p.arch]} · busca de perfil · ${MODE[p.mode]}`
+      : `${STATUS_TEXT[run.status]} · ${ARCH[p.arch]} · ${SCEN[p.scenario]} · ${MODE[p.mode]}${p.mode === 'tcc' && p.vus ? ` · ${fmtInt(p.vus)} usuários` : ''}`;
     if (active) { title = info?.title ?? 'Iniciando'; desc = info?.desc(p) ?? ''; techTxt = techOf(info, p); }
-    else if (run.status === 'success') { title = 'Teste concluído e resultado salvo'; desc = 'Os números já aparecem na aba Resultados.'; }
+    else if (run.status === 'success') { title = 'Concluído'; desc = 'Resultado disponível em Execuções.'; }
     else if (run.status === 'thresholds_failed') {
-      title = p.kind === 'user_lookup' ? 'Teste concluído, mas fora do contrato de latência' : 'Teste concluído, mas muitas ações falharam';
+      title = p.kind === 'user_lookup' ? 'Concluído fora do contrato' : 'Concluído com muitas falhas';
       desc = p.kind === 'user_lookup'
-        ? 'O contrato exige menos de 1% de falhas, 95% das respostas abaixo de 500 ms e nenhuma resposta fora do formato. O resultado ficou fora disso; os números foram salvos e podem ser comparados.'
-        : 'No teste rápido, 20% ou mais das ações deram erro ou demoraram demais. Os números foram salvos mesmo assim e podem ser comparados.';
+        ? 'Contrato: < 1% de falhas, p95 < 500 ms, sem erros de formato. Resultado salvo.'
+        : '20% ou mais das ações falharam. Resultado salvo.';
       techTxt = 'threshold do k6 reprovado';
     }
-    else if (run.status === 'aborted') { title = 'Teste interrompido'; desc = 'O teste foi parado manualmente. Os serviços continuam ligados; o próximo teste completo volta à rede original.'; }
-    else if (run.status === 'failed') { title = 'O teste parou com erro'; desc = `Isso aconteceu na etapa “${PHASE_INFO[run.phase]?.title.toLowerCase() ?? 'inicial'}”. As últimas linhas do registro técnico abaixo mostram o motivo.`; }
+    else if (run.status === 'aborted') { title = 'Interrompido'; desc = 'Parado manualmente; serviços continuam ligados.'; }
+    else if (run.status === 'failed') { title = 'Erro'; desc = `Na etapa “${PHASE_INFO[run.phase]?.title.toLowerCase() ?? 'inicial'}”. Veja o terminal.`; }
   }
   $('#now-label').textContent = lab;
   $('#now-title').replaceChildren(title, techTxt ? tech(techTxt) : '');
@@ -408,7 +282,7 @@ function renderRun() {
   if (run.status !== 'idle') {
     meta.append(h('span', { id: 'elapsed' }));
     if (run.resultDir) meta.append(h('span', { class: 'tech', title: 'pasta com os resultados', text: run.resultDir }));
-    if (run.resultDir && !active) meta.append(h('a', { href: '#comparacao', onclick: () => { selection = [...new Set([run.resultDir, ...(selection ?? [])])]; saveSelection(); }, text: 'Ver nos resultados' }));
+    if (run.resultDir && !active) meta.append(h('a', { href: '#comparacao', onclick: () => { selection = [...new Set([run.resultDir, ...(selection ?? [])])]; saveSelection(); }, text: 'Abrir em Execuções' }));
     if (!active && run.code != null && run.status !== 'success') meta.append(h('span', { class: 'tech', text: `código de saída ${run.code}` }));
   }
   renderPhaseTimes();
@@ -428,7 +302,7 @@ function renderPhaseTimes() {
     $('.ph-time', li).textContent = txt;
   }
   const el = $('#elapsed');
-  if (el && run.startedAt) el.textContent = `Tempo total: ${fmtDur((now - run.startedAt) / 1000)}`;
+  if (el && run.startedAt) el.textContent = `Total: ${fmtDur((now - run.startedAt) / 1000)}`;
 }
 
 // Terminal
@@ -510,7 +384,8 @@ async function loadRuns() {
   tableHidden = false; applyTableVisibility();
   if (selection == null) {
     // Padrão: último teste completo de cada versão, uso misto, pico viral.
-    const pick = (a) => runs.find((r) => r.kind === 'viral' && r.arch === a && r.mode === 'tcc' && r.scenario === 'mixed' && r.vus_max === 600 && r.counts);
+    const pick = (a) => runs.find((r) => r.kind === 'viral' && r.arch === a && r.mode === 'tcc' && r.scenario === 'viral_peak' && r.counts)
+      ?? runs.find((r) => r.kind === 'viral' && r.arch === a && r.mode === 'tcc' && r.counts);
     selection = [pick('sync'), pick('async')].filter(Boolean).map((r) => r.id);
   }
   selection = selection.filter((id) => runs.some((r) => r.id === id));
@@ -536,7 +411,7 @@ const usersOf = (r) => {
   return r.mode === 'tcc' ? r.vus_max : 50;
 };
 const runLabel = (r) => (r.kind === 'user_lookup'
-  ? `${ARCH[r.arch]}, leitura de perfil, ${MODE[r.mode]}`
+  ? `${ARCH[r.arch]}, busca de perfil, ${MODE[r.mode]}`
   : `${ARCH[r.arch]}, ${SCEN[r.scenario] ?? 'sem situação'}, ${MODE[r.mode]}${r.mode === 'tcc' && r.vus_max ? `, ${r.vus_max} usuários` : ''}`);
 const runLabelFull = (r) => `${runLabel(r)} (${fmtDateShort(r.started_at)})`;
 // Rótulo curto para cartões, gráficos e tabela: versão + só o que difere entre os selecionados.
@@ -557,11 +432,11 @@ function shortBase(r, sel) {
 function commonContext(sel) {
   const same = (f) => new Set(sel.map(f)).size === 1;
   const r = sel[0], parts = [];
-  if (same((x) => x.kind)) parts.push(r.kind === 'user_lookup' ? 'teste de leitura de perfil (baseline)' : 'teste de viralização');
-  if (same((x) => x.scenario) && r.scenario) parts.push(`situação “${SCEN[r.scenario] ?? '–'}”`);
+  if (same((x) => x.kind)) parts.push(r.kind === 'user_lookup' ? 'busca de perfil' : 'viralização');
+  if (same((x) => x.scenario) && r.scenario) parts.push(SCEN[r.scenario] ?? '–');
   if (same((x) => x.mode)) parts.push(`teste ${MODE[r.mode]}`);
   if (same(usersOf)) parts.push(`${usersOf(r)} usuários simultâneos`);
-  return parts.length ? `Todos os testes selecionados: ${parts.join(', ')}.` : '';
+  return parts.length ? `Em comum: ${parts.join(' · ')}.` : '';
 }
 
 function colorsFor(list) {
@@ -582,7 +457,7 @@ function renderRunsTable() {
     && (!filters.scenario || r.scenario === filters.scenario) && (!filters.vus || String(r.vus_max) === String(filters.vus)));
   tb.replaceChildren();
   if (!list.length) {
-    tb.append(h('tr', {}, h('td', { colspan: 11, class: 'empty', text: runs.length ? 'Nenhum teste com esses filtros.' : 'Ainda não há testes salvos. Rode o primeiro na aba “Rodar um teste”.' })));
+    tb.append(h('tr', {}, h('td', { colspan: 11, class: 'empty', text: runs.length ? 'Nenhuma execução com esses filtros.' : 'Nenhuma execução salva. Use a aba Executar.' })));
   }
   const colors = colorsFor(selectedRuns());
   for (const r of list) {
@@ -600,7 +475,7 @@ function renderRunsTable() {
       h('td', { class: 'num', text: fmtMs(m?.latency?.p95) }),
       h('td', { class: 'num', text: drainText(r.counts?.drenagem) })));
   }
-  $('#runs-hint').textContent = `Mostrando ${list.length} de ${runs.length} testes, ${selection.length} marcado(s). Clique numa linha para incluir ou tirar da comparação.`;
+  $('#runs-hint').textContent = `${list.length} de ${runs.length} execuções · ${selection.length} selecionada(s) · clique na linha para comparar`;
 }
 
 const selectedRuns = () => (selection ?? []).map((id) => runs.find((r) => r.id === id)).filter(Boolean);
@@ -608,23 +483,23 @@ const selectedRuns = () => (selection ?? []).map((id) => runs.find((r) => r.id =
 // Definições compartilhadas por cartões e exportação.
 const drainVal = (r) => (r.counts?.drenagem?.completa ? r.counts.drenagem.segundos : null);
 const CARDS = [
-  { title: 'Pedidos atendidos por segundo', explain: 'Quanto trabalho o sistema dá conta. Mais é melhor.', tech: 'vazão, req/s', get: (r) => r.metrics?.rps, fmt: (v) => fmtNum(v, 1) },
-  { title: 'Pedidos que falharam', explain: 'Deram erro ou passaram de 30 s sem resposta. Menos é melhor.', tech: 'taxa de falha HTTP', get: (r) => r.metrics?.fail_rate, fmt: fmtPct, bad: true },
+  { title: 'Vazão', explain: 'Requisições atendidas por segundo. Maior é melhor.', tech: 'req/s', get: (r) => r.metrics?.rps, fmt: (v) => fmtNum(v, 1) },
+  { title: 'Taxa de falhas', explain: 'Erro ou mais de 30 s sem resposta. Menor é melhor.', tech: 'http_req_failed', get: (r) => r.metrics?.fail_rate, fmt: fmtPct, bad: true },
   {
-    title: 'Respostas fora do formato prometido', explain: 'O contrato do baseline exige que toda resposta traga exatamente os campos do perfil. Tem que ser zero.', tech: 'contract_errors', fmt: fmtPct, bad: true,
+    title: 'Erros de contrato', explain: 'Respostas fora do formato do perfil. Deve ser zero.', tech: 'contract_errors', fmt: fmtPct, bad: true,
     get: (r) => (r.kind === 'user_lookup' ? r.metrics?.contract_errors?.rate : null),
-    note: (r) => (r.kind !== 'user_lookup' ? 'não medido neste teste' : null),
+    note: (r) => (r.kind !== 'user_lookup' ? 'só na busca de perfil' : null),
   },
-  { title: 'Tempo de resposta típico', explain: 'Metade dos pedidos foi respondida em até esse tempo.', tech: 'latência p50', get: (r) => r.metrics?.latency?.p50, fmt: fmtMs },
-  { title: 'Tempo de resposta para 95% dos usuários', explain: 'Só 5% dos pedidos demoraram mais do que isso. No baseline de leitura, o contrato exige menos de 500 ms.', tech: 'latência p95', get: (r) => r.metrics?.latency?.p95, fmt: fmtMs },
-  { title: 'Tempo de resposta dos mais lentos', explain: '99% dos pedidos foram respondidos até aqui.', tech: 'latência p99', get: (r) => r.metrics?.latency?.p99, fmt: fmtMs },
+  { title: 'Latência p50', explain: 'Metade das requisições respondeu até aqui.', tech: 'p(50)', get: (r) => r.metrics?.latency?.p50, fmt: fmtMs },
+  { title: 'Latência p95', explain: '95% responderam até aqui. Contrato da busca: < 500 ms.', tech: 'p(95)', get: (r) => r.metrics?.latency?.p95, fmt: fmtMs },
+  { title: 'Latência p99', explain: '99% responderam até aqui.', tech: 'p(99)', get: (r) => r.metrics?.latency?.p99, fmt: fmtMs },
   {
-    title: 'Tempo para concluir o que ficou pendente', explain: 'Depois que os usuários param, quanto o sistema ainda leva para terminar de gravar o que aceitou.', tech: 'drenagem', get: drainVal, fmt: fmtDur,
-    note: (r) => (r.kind === 'user_lookup' ? 'sem escritas, nada fica pendente' : !r.counts ? 'não medido' : r.counts.drenagem?.completa ? null : `não terminou em ${fmtDur(r.counts.drenagem?.timeout_s)}`),
+    title: 'Tempo de drenagem', explain: 'Tempo para concluir o pendente após a carga.', tech: 'drenagem', get: drainVal, fmt: fmtDur,
+    note: (r) => (r.kind === 'user_lookup' ? 'sem escritas' : !r.counts ? 'não medido' : r.counts.drenagem?.completa ? null : `não terminou em ${fmtDur(r.counts.drenagem?.timeout_s)}`),
   },
   {
-    title: 'Maior fila de espera', explain: 'Quantos pedidos chegaram a esperar na fila ao mesmo tempo.', tech: 'pico de mensagens no RabbitMQ', get: (r) => r.metrics?.queue_peak, fmt: fmtInt,
-    note: (r) => (r.kind === 'user_lookup' ? 'sem escritas, a fila não é usada' : r.arch === 'sync' ? 'não usa fila' : null),
+    title: 'Pico da fila', explain: 'Máximo de mensagens aguardando processamento.', tech: 'RabbitMQ', get: (r) => r.metrics?.queue_peak, fmt: fmtInt,
+    note: (r) => (r.kind === 'user_lookup' ? 'sem escritas' : r.arch === 'sync' ? 'sem fila' : null),
     detail: (r) => (r.metrics?.queues && Object.keys(r.metrics.queues).length ? `por fila: ${Object.entries(r.metrics.queues).map(([q, v]) => `${q} ${fmtInt(v.max)}`).join(', ')}` : null),
   },
 ];
@@ -660,8 +535,7 @@ function renderCards(sel, colors) {
           h('span', { class: 'bar' }, h('i', { style: `width:${v == null || !max ? 0 : Math.max(1.5, (v / max) * 100)}%;background:${colors.get(r.id)}` })),
           v == null && note ? h('small', { class: 'note', text: note }) : null,
           detail ? h('small', { class: 'note', text: detail }) : null);
-      })),
-      h('span', { class: 'card-tech' }, tech(c.tech)));
+      })));
   }));
 }
 
@@ -729,20 +603,20 @@ function auditRows(r) {
   const late = 'pedidos que o teste desistiu de esperar, mas o servidor terminou depois (inferido)';
   const dPosts = diff(ac?.posts, pfin?.posts), dShares = diff(ac?.shares, pfin?.shares);
   return [
-    { group: 'Pedidos aceitos (o sistema respondeu “ok”)', tech: 'respostas 2xx no k6' },
+    { group: 'Aceitos (resposta 2xx)', tech: 'k6' },
     ['Publicações', fmtInt(ac?.posts), null, 'posts'],
     ['Compartilhamentos', fmtInt(ac?.shares), null, 'shares, sem os 422'],
-    { group: 'Gravados no banco quando os usuários pararam', tech: 'persistidos ao fim da carga' },
+    { group: 'Gravados ao fim da carga', tech: 'persistidos' },
     ['Publicações', fmtInt(pf?.posts), null, 'posts'],
     ['Compartilhamentos', fmtInt(pf?.shares), null, 'shares'],
     ['Posts entregues nos feeds', fmtInt(pf?.feed_items), null, 'feed_items'],
     ['Tarefas de entrega ainda pendentes', fmtInt(c?.fim_carga?.tarefas_pendentes), null, 'outbox'],
-    { group: 'Gravados no banco depois que tudo foi concluído', tech: 'persistidos após drenagem' },
+    { group: 'Gravados após a drenagem', tech: 'persistidos' },
     ['Publicações', fmtInt(pfin?.posts), null, 'posts'],
     ['Compartilhamentos', fmtInt(pfin?.shares), null, 'shares'],
     ['Posts entregues nos feeds', fmtInt(pfin?.feed_items), null, 'feed_items'],
     ['Compartilhamentos repetidos descartados', r.arch === 'async' ? fmtInt(pfin?.shares_deduplicados) : '–', null, 'shares_deduplicados'],
-    { group: 'Diferença entre gravados e aceitos', tech: 'persistidos após drenagem − aceitos' },
+    { group: 'Gravados − aceitos', tech: 'persistidos após drenagem − aceitos' },
     ['Publicações', signed(dPosts), r.arch === 'sync' && dPosts > 0 ? late : null, 'posts'],
     ['Compartilhamentos', signed(dShares), r.arch === 'async' && dedup ? `${fmtInt(dedup)} eram repetidos e foram descartados` : r.arch === 'sync' && dShares > 0 ? late : null, 'shares'],
     ['A conta fecha?', closing, r.arch === 'async' && c ? 'aceitos menos repetidos deve ser igual a gravados' : r.arch === 'sync' && c ? 'a versão síncrona recusa repetidos na hora' : null, 'aceitos − deduplicados = persistidos'],
@@ -750,7 +624,7 @@ function auditRows(r) {
     ['O teste desistiu de esperar (mais de 30 s)', fmtInt(m?.timeouts), null, 'http_timeouts'],
     ['Erro do servidor', fmtInt(m?.http_5xx), null, 'HTTP 5xx'],
     ['Compartilhamento repetido recusado', fmtInt(m?.share_duplicates), null, 'HTTP 422'],
-    { group: 'Conclusão do trabalho pendente', tech: 'drenagem' },
+    { group: 'Drenagem', tech: 'pendências' },
     ['Terminou?', !d ? '–' : d.completa ? 'sim' : 'não', null, 'drenagem.completa'],
     ['Quanto tempo levou', d?.completa ? fmtDur(d.segundos) : '–', null, 'drenagem.segundos'],
     ['Tempo máximo de espera', d ? fmtDur(d.timeout_s) : '–', null, 'DRAIN_TIMEOUT_S'],
@@ -761,16 +635,16 @@ function auditRows(r) {
 // Título e introdução da seção final mudam conforme a seleção: viral compara "prometido × gravado";
 // baseline compara o estado do banco antes e depois da carga (leitura pura não pode alterar nada).
 const AUDIT_VIRAL = {
-  title: 'Prometido × gravado',
+  title: 'Aceitos × gravados',
   tech: 'consistência eventual',
-  lede: 'Quando o sistema responde “ok”, o pedido foi aceito. Na versão com fila, porém, a gravação acontece depois. A tabela compara quantos pedidos foram aceitos com quantos de fato apareceram no banco de dados: no momento em que os usuários pararam e depois que a fila terminou de esvaziar.',
-  footnote: 'Pedidos por segundo e falhas contam só as ações dos usuários simulados. Os tempos de resposta gerais incluem também uma verificação da fila feita uma vez por segundo, que só existe na versão com fila. Quando sobrecarregada, a versão com fila responde com erro após 10 s de espera no banco; a síncrona deixa o pedido esperar até o teste desistir, aos 30 s.',
+  lede: 'Na arquitetura orientada a eventos, uma requisição aceita ainda pode não estar gravada. A tabela compara requisições aceitas com registros no banco ao fim da carga e após a drenagem.',
+  footnote: 'Vazão e falhas contam só as ações dos usuários simulados; a latência geral da orientada a eventos inclui uma verificação de fila por segundo. Sob sobrecarga, ela recusa consultas acima de 10 s, enquanto a síncrona espera até o limite de 30 s do k6.',
 };
 const AUDIT_BASELINE = {
-  title: 'O banco ficou intacto?',
-  tech: 'leitura pura',
-  lede: 'O baseline de leitura de perfil não grava nada: os contadores do banco, medidos pelo endpoint /metricas, devem ser idênticos antes e depois da carga. Qualquer diferença indicaria vazamento de escrita no caminho de leitura.',
-  footnote: 'No baseline de leitura, o teste desiste de esperar uma resposta aos 30 s (timeout do k6) e toda resposta é conferida campo a campo contra o formato prometido (cartão “contract_errors”).',
+  title: 'Banco intacto?',
+  tech: 'somente leitura',
+  lede: 'Carga somente leitura: os contadores do banco devem ser idênticos antes e depois.',
+  footnote: 'Toda resposta é conferida contra o formato do perfil; o k6 desiste após 30 s.',
 };
 const STATE_LABELS = {
   usuarios: 'Pessoas', feeds: 'Feeds', relacoes_seguir: 'Conexões “segue”', posts_criados: 'Posts',
@@ -876,7 +750,6 @@ function download(name, text, type) {
 // ---------------------------------------------------------------- início
 restoreForm();
 syncForm();
-renderOverview();
 showTab();
 connect();
 loadRuns();

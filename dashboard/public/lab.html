@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Laboratório · Grafos e Observabilidade</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600;8..60,700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/" aria-label="Voltar ao site">
+      <span class="brand-logo"><img src="img/brasao-icei-puc.png" alt="ICEI e PUC Minas" width="69" height="40"></span>
+      <span class="brand-text">
+        <strong>Laboratório</strong>
+        <span class="brand-sub">Execução e comparação de experimentos</span>
+      </span>
+    </a>
+    <nav class="tabs" role="tablist" aria-label="Seções">
+      <a role="tab" href="#execucao" data-tab="execucao">Executar</a>
+      <a role="tab" href="#comparacao" data-tab="comparacao">Execuções</a>
+      <a href="/" class="tab-back">← Site</a>
+    </nav>
+    <a class="run-pill" id="run-pill" href="#execucao" data-state="idle">
+      <span class="dot" aria-hidden="true"></span><span id="run-pill-text">Nenhum teste rodando</span>
+    </a>
+  </header>
+
+  <main>
+    <!-- ============================================================ EXECUTAR -->
+    <section id="tab-execucao" class="tab" role="tabpanel" hidden>
+      <div class="exec">
+        <form class="exec-form" id="run-form" autocomplete="off">
+          <h2>Novo teste</h2>
+
+          <fieldset class="seg" id="f-kind">
+            <legend>Tipo de carga</legend>
+            <label><input type="radio" name="kind" value="viral" checked><span>Viralização</span></label>
+            <label><input type="radio" name="kind" value="user_lookup"><span>Busca de perfil</span></label>
+          </fieldset>
+
+          <fieldset class="seg" id="f-arch">
+            <legend>Arquitetura</legend>
+            <label><input type="radio" name="arch" value="sync" checked><span><i class="swatch sync"></i>Síncrona</span></label>
+            <label><input type="radio" name="arch" value="async"><span><i class="swatch async"></i>Eventos</span></label>
+          </fieldset>
+
+          <fieldset class="seg" id="f-mode">
+            <legend>Duração</legend>
+            <label><input type="radio" name="mode" value="smoke" checked><span class="two">Rápido<small>verificação</small></span></label>
+            <label><input type="radio" name="mode" value="tcc"><span class="two">Completo<small>dados do TCC</small></span></label>
+          </fieldset>
+
+          <label class="field" id="f-scenario">
+            <span>Cenário</span>
+            <select name="scenario">
+              <option value="organic">Viralização orgânica</option>
+              <option value="viral_peak">Pico de viralização</option>
+              <option value="mixed">Uso misto (mixed)</option>
+              <option value="baseline">Uso comum (baseline)</option>
+              <option value="fanout">Celebridades em ação (fanout)</option>
+              <option value="graph_read">Leitura do viral (graph_read)</option>
+            </select>
+          </label>
+
+          <fieldset class="seg" id="f-vus">
+            <legend>Usuários simultâneos</legend>
+            <label><input type="radio" name="vus" value="20"><span>20</span></label>
+            <label><input type="radio" name="vus" value="600" checked><span>600</span></label>
+          </fieldset>
+
+          <label class="check" id="f-restore">
+            <input type="checkbox" name="restore">
+            <span>Restaurar a rede original antes</span>
+          </label>
+          <p class="hint" id="f-hint-restore" hidden>O teste completo sempre restaura a rede original.</p>
+          <p class="hint" id="f-hint-fixed" hidden>Cenário com perfil próprio: restaura a rede e usa pico fixo (50 no rápido, 300 no completo).</p>
+          <p class="hint" id="f-hint-baseline" hidden>Só leituras: 80 usuários no rápido; 100 → 400 → 600 no completo.</p>
+
+          <details class="cmd-preview">
+            <summary>Comando</summary>
+            <code id="cmd-preview"></code>
+          </details>
+
+          <div class="exec-actions">
+            <button type="submit" class="btn primary" id="btn-run">Iniciar teste</button>
+            <button type="button" class="btn danger" id="btn-abort" hidden>Parar teste</button>
+          </div>
+          <p class="form-error" id="form-error" role="alert" hidden></p>
+          <p class="hint">Uma arquitetura por vez, para não disputarem a mesma máquina.</p>
+        </form>
+
+        <div class="exec-live">
+          <div class="now" id="now" data-state="idle">
+            <p class="now-label" id="now-label">Pronto para começar</p>
+            <p class="now-title" id="now-title">Escolha a configuração ao lado.</p>
+            <p class="now-desc" id="now-desc"></p>
+            <p class="now-meta" id="run-meta"></p>
+          </div>
+          <ol class="phases" id="phases">
+            <li data-phase="restore"><span class="ph-mark"></span><span class="ph-name">Restaurar banco</span><span class="ph-time"></span></li>
+            <li data-phase="warmup"><span class="ph-mark"></span><span class="ph-name">Aquecer</span><span class="ph-time"></span></li>
+            <li data-phase="load"><span class="ph-mark"></span><span class="ph-name">Aplicar carga</span><span class="ph-time"></span></li>
+            <li data-phase="drain"><span class="ph-mark"></span><span class="ph-name">Drenar fila</span><span class="ph-time"></span></li>
+            <li data-phase="done"><span class="ph-mark"></span><span class="ph-name">Salvo</span><span class="ph-time"></span></li>
+          </ol>
+          <div class="console-wrap">
+            <div class="console-bar">
+              <span id="console-title">Terminal</span>
+              <label class="check small"><input type="checkbox" id="opt-progress" checked><span>Resumir progresso</span></label>
+              <label class="check small"><input type="checkbox" id="opt-follow" checked><span>Rolar automaticamente</span></label>
+            </div>
+            <pre class="console" id="console" aria-live="off" tabindex="0"><span class="muted">As mensagens do teste aparecem aqui.</span></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ RESULTADOS -->
+    <section id="tab-comparacao" class="tab" role="tabpanel" hidden>
+      <div class="cmp-head">
+        <div>
+          <h2>Execuções</h2>
+          <p class="lede">Marque duas ou mais para comparar.</p>
+        </div>
+        <div class="filters" id="filters">
+          <select data-filter="kind" aria-label="Filtrar carga"><option value="">Toda carga</option><option value="viral">Viralização</option><option value="user_lookup">Busca de perfil</option></select>
+          <select data-filter="arch" aria-label="Filtrar arquitetura"><option value="">Toda arquitetura</option><option value="sync">Síncrona</option><option value="async">Orientada a eventos</option></select>
+          <select data-filter="mode" aria-label="Filtrar duração"><option value="">Toda duração</option><option value="tcc">Completo</option><option value="smoke">Rápido</option></select>
+          <select data-filter="scenario" aria-label="Filtrar cenário"><option value="">Todo cenário</option><option value="organic">Viralização orgânica</option><option value="viral_peak">Pico de viralização</option><option value="mixed">Uso misto</option><option value="baseline">Uso comum</option><option value="fanout">Celebridades em ação</option><option value="graph_read">Leitura do viral</option></select>
+          <select data-filter="vus" aria-label="Filtrar usuários"><option value="">Qualquer intensidade</option></select>
+          <button type="button" class="btn ghost" id="btn-reload">Atualizar</button>
+          <button type="button" class="btn ghost" id="btn-clear-sel">Limpar</button>
+        </div>
+      </div>
+      <div class="runs-scroll">
+        <table class="runs" id="runs-table">
+          <thead><tr>
+            <th class="c-check"><span class="sr">Selecionar</span></th>
+            <th>Carga</th><th>Arquitetura</th><th>Duração</th><th>Cenário</th>
+            <th class="num">Usuários</th><th>Data</th>
+            <th class="num">Vazão (req/s)</th>
+            <th class="num">Falhas</th>
+            <th class="num">p95</th>
+            <th class="num">Drenagem</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="hint" id="runs-hint"></p>
+
+      <div id="cmp-body" hidden>
+        <div class="cmp-toolbar">
+          <div class="legend" id="legend"></div>
+          <div class="export">
+            <button type="button" class="btn ghost" id="btn-md">Copiar Markdown</button>
+            <button type="button" class="btn ghost" id="btn-csv">Baixar CSV</button>
+            <span class="toast" id="toast" role="status"></span>
+          </div>
+        </div>
+
+        <p class="hint" id="cmp-context"></p>
+        <div class="cards" id="cards"></div>
+        <p class="footnote" id="cmp-footnote"></p>
+
+        <div class="chart-block">
+          <div class="chart-head">
+            <div>
+              <h3>Latência por ação</h3>
+              <p class="hint">Menor é melhor. Linha vermelha: limite de 30 s do k6.</p>
+            </div>
+            <div class="seg compact" id="lat-metric">
+              <label><input type="radio" name="latm" value="p50"><span>p50</span></label>
+              <label><input type="radio" name="latm" value="p95" checked><span>p95</span></label>
+              <label><input type="radio" name="latm" value="p99"><span>p99</span></label>
+            </div>
+          </div>
+          <div id="chart-latency" class="chart"></div>
+        </div>
+        <div class="chart-block">
+          <div class="chart-head">
+            <div>
+              <h3>Falhas por ação</h3>
+              <p class="hint">Erro ou mais de 30 s sem resposta.</p>
+            </div>
+          </div>
+          <div id="chart-fail" class="chart"></div>
+        </div>
+
+        <h3 id="audit-title">Aceitos × gravados</h3>
+        <p class="lede" id="audit-lede"></p>
+        <div class="runs-scroll"><table class="audit" id="audit"></table></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <img src="img/brasao-icei-puc.png" alt="" width="52" height="30">
+    <span>Pontifícia Universidade Católica de Minas Gerais · Instituto de Ciências Exatas e Informática · Betim, 2026</span>
+  </footer>
+
+  <script src="lab.js" type="module"></script>
+</body>
+</html>
